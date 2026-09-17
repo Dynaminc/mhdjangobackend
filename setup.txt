@@ -1,0 +1,303 @@
+
+
+pip install -r requirements.txt
+
+# 1. Create project
+django-admin startproject mhpro .
+cd mhpro
+
+# 2. Create apps directory
+mkdir apps
+touch apps/__init__.py
+
+# 3. Create each app
+python manage.py startapp core apps/core
+python manage.py startapp users apps/users
+python manage.py startapp appointments apps/appointments
+python manage.py startapp consultations apps/consultations
+python manage.py startapp prescriptions apps/prescriptions
+python manage.py startapp labs apps/labs
+python manage.py startapp chat apps/chat
+python manage.py startapp queue apps/queue
+python manage.py startapp payments apps/payments
+python manage.py startapp notifications apps/notifications
+python manage.py startapp analytics apps/analytics
+
+# 4. Install dependencies
+pip install -r requirements.txt
+
+# 5. Run migrations
+python manage.py makemigrations
+python manage.py migrate
+
+# 6. Create superuser
+python manage.py createsuperuser
+
+# 7. Run server
+python manage.py runserver
+
+
+
+
+
+
+1. User → Register → Patient/Doctor Profile
+2. Patient → Book Appointment → Clinic/Doctor
+3. Appointment → Consultation → Medical Record
+4. Medical Record → Prescriptions / Labs / Attachments
+5. Patient ↔ Doctor → Chat Messages
+6. Queue → Patient Waiting → Admitted → Consultation
+7. Appointment → Payment → Patient
+
+
+
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 1. PATIENT START CONSULTATION                                          │
+│    Django creates consultation (status: 'ongoing')                     │
+│    Returns consultation_id to frontend                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 2. CONNECT TO CHAT SERVER                                              │
+│    Frontend connects to Flask Chat via WebSocket                       │
+│    Sends JWT token + consultation_id                                   │
+│    Flask validates token with Django (or locally)                      │
+│    Flask creates conversation linked to consultation_id                │
+│    Returns conversation_id + public key for encryption                 │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 3. END-TO-END ENCRYPTED CHAT                                           │
+│    All messages encrypted on frontend before sending                   │
+│    Flask stores encrypted messages (cannot decrypt)                    │
+│    Messages broadcast to conversation room                             │
+│    Each user decrypts on their device                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 4. END CONSULTATION                                                    │
+│    Doctor/Patient ends consultation                                    │
+│    Flask marks conversation as inactive                                │
+│    Flask notifies Django via API                                       │
+│    Django updates consultation status to 'completed'                   │
+│    Django creates medical record from consultation                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 5. FUTURE ACCESS                                                       │
+│    User views past consultations in Django                             │
+│    Django has consultation_id → Flask retrieves chat history           │
+│    Users can view encrypted chat history (decrypted on device)         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                         FRONTEND                               │
+└─────────────────────────────────────────────────────────────────┘
+                    │                            │
+                    ▼                            ▼
+        ┌───────────────────┐        ┌─────────────────────┐
+        │    Django (API)   │        │   Flask (WebSocket)  │
+        │                   │        │                      │
+        │ • Conversation    │        │ • Chat messages      │
+        │   metadata        │        │ • Real-time events   │
+        │ • Profiles        │        │ • Encryption         │
+        │ • Unread counts   │◄──────►│ • Attachments        │
+        │ • Last message    │        │ • Typing indicators  │
+        │   preview         │        │ • Read receipts      │
+        └───────────────────┘        └──────────────────────┘s
+
+
+Model	Purpose
+LabTestCatalog	Master catalog of all available tests with reference ranges, costs, sample requirements
+LabTestOrder	Test orders placed by doctors with priority, status, tracking
+LabTestResult	Results for completed tests with abnormal flagging, verification
+LabTestAttachment	File attachments (PDF, images) for lab results
+LabPanel	Pre-defined panels of tests (e.g., Complete Metabolic Panel)
+LabTestProfile	Patient-specific test history for trending and alerts
+LabOrderTemplate	Common order sets for efficiency
+
+
+
+Model	Purpose
+MedicationCatalog	Master catalog of all medications with categories, interactions, warnings
+Prescription	Full prescription with dosage, frequency, refills, status tracking
+RefillRequest	Patient-initiated refill requests with approval workflow
+MedicationInteraction	Drug-drug interactions with severity levels
+MedicationSchedule	Detailed administration schedule
+MedicationAdherence	Track patient adherence to medication regimen
+
+
+auth_user (Django default)
+    ├── id
+    ├── username
+    ├── email
+    ├── password
+    ├── first_name
+    ├── last_name
+    └── ...
+
+users_profile (One-to-One with auth_user)
+    ├── id
+    ├── user_id (FK to auth_user)
+    ├── role (patient/doctor/admin)
+    ├── phone
+    ├── age
+    ├── gender
+    ├── date_of_birth
+    ├── last_login_ip
+    ├── last_logout_at
+    ├── login_count
+    ├── is_online
+    ├── profile_picture
+    ├── bio
+    ├── language
+    ├── timezone
+    ├── notifications_enabled
+    └── ...
+
+users_doctorprofile (One-to-One with Profile)
+    ├── id
+    ├── profile_id (FK to users_profile)
+    ├── specialty
+    ├── license_number
+    ├── years_experience
+    ├── rating
+    ├── consultation_fee
+    ├── is_available
+    ├── hospital_affiliation
+    ├── education
+    ├── certifications
+    └── ...
+
+users_patientprofile (One-to-One with Profile)
+    ├── id
+    ├── profile_id (FK to users_profile)
+    ├── blood_type
+    ├── emergency_contact_name
+    ├── emergency_contact_phone
+    ├── emergency_contact_relation
+    ├── insurance_provider
+    ├── insurance_number
+    ├── insurance_expiry
+    └── ...
+
+
+
+
+
+
+┌────────────────────────────────────────────────────────┐
+│ 1. Chat page mounts                                    │
+│    → loadConversation() → GET /chat/conversations/     │
+│    → If none: POST /chat/conversations/                │
+│    → POST /chat/conversations/{id}/sync/  (Flask link) │
+├────────────────────────────────────────────────────────┤
+│ 2. connectSocket(conversation)                          │
+│    → io('http://localhost:5001', {                     │
+│         query: { token, user_id, role, conversation_id }│
+│       })                                                │
+│    → On 'connect' → emit 'join_conversation'           │
+│    → On 'connected' → set status = 'connected'         │
+├────────────────────────────────────────────────────────┤
+│ 3. User types + sends                                   │
+│    → Optimistic insert                                  │
+│    → socket.emit('send_message', {                     │
+│         conversation_id, message, message_type,        │
+│         sender_id, sender_role, temp_id                │
+│       })                                                │
+├────────────────────────────────────────────────────────┤
+│ 4. Other party receives                                 │
+│    → Server emits 'new_message'                        │
+│    → { sender_id, message, ... }                       │
+│    → Appended to messages array (dedup by id)          │
+└────────────────────────────────────────────────────────┘    si
+
+
+
+
+
+
+
+
+
+
+Doctor opens EMR page
+      │
+      ▼
+ChatProvider mounts (no conversation yet)
+      │
+      ▼
+Doctor selects Patient A
+      │
+      ▼
+useEffect fires → loadConversation({ patientProfileId: A.id })
+      │
+      ▼
+ChatContext:
+  1. GET /chat/conversations/
+  2. Find active conversation where patient_profile === A.id
+  3. setState(conversation)
+  4. connectSocket(conversation)
+      │
+      ▼
+Doctor clicks Chat tab → ChatTab renders
+      │
+      ▼
+Doctor types "Hello" → sendMessage()
+      │
+      ▼
+ChatContext.sendMessage:
+  socket.emit('send_message', {
+    conversation_id: <A's conversation id>,
+    message: "Hello",
+    ...
+  })
+      │
+      ▼
+Flask:
+  - Saves message
+  - Emits `message` to room <A's conversation id>
+      │
+      ▼
+Patient's /chat page (in room <A's conversation id>):
+  socket.on('message', ...) → append to messages
+      │
+      ▼
+Doctor's EMR ChatTab (same room):
+  socket.on('message', ...) → ChatContext appends
+  → ChatTab re-renders with new message
+
+
+
+
+                    ┌──────────────────────────┐
+                    │    ChatProvider (root)   │
+                    │  ─────────────────────   │
+                    │  state.messages []       │
+                    │  socketRef               │
+                    │  state.conversation      │
+                    └────────────┬─────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              ▼                                     ▼
+    ┌────────────────────┐              ┌────────────────────┐
+    │   /chat (patient)  │              │   /emr (doctor)    │
+    │   useChat()        │              │   useChat()        │
+    │   ▼ ChatTab        │              │   ▼ ChatTab        │
+    │   messages[]       │              │   messages[]       │
+    │   sendMessage()    │              │   sendMessage()    │
+    └─────────┬──────────┘              └─────────┬──────────┘
+              │                                   │
+              │       ┌──────────────────┐        │
+              └──────►│  Flask WS        │◄───────┘
+                      │  localhost:5001  │
+                      │  'message' event │
+                      │  'send_message'  │
+                      └──────────────────┘

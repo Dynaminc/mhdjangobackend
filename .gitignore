@@ -1,0 +1,28 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+.env.local
+.DS_Store
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+*.log
+media/
+staticfiles/
+node_modules/
+dist/
+*.egg-info/
+# ==========================================
+# Migrations — ignore everything except __init__.py
+# ==========================================
+*/migrations/*.py
+!*/migrations/__init__.py
+*/migrations/*.pyc
+*/migrations/__pycache__/
+migrations
+.env
