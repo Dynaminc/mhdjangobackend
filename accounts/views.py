@@ -37,37 +37,75 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
     queryset = User.objects.all()
+    
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        user = serializer.save()
-
+        
+        
+        referral = None
+        user, referral = serializer.save()
+        print('Referrealstatus',referral, user)
         # Build verification URL
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         token = email_verification_token.make_token(user)
-        # verify_url = request.build_absolute_uri(
-        #     reverse('verify-email') + f'?uid={uid}&token={token}'
-        # )
+            
         verify_url = (
             f"{settings.FRONTEND_URL}/verify-email"
             f"?uid={uid}&token={token}"
         )
-        # Send email
-        send_mail(
-            subject='Verify your MHPro account',
-            message=(
-                f"Hi {user.first_name or user.email},\n\n"
-                f"Please verify your email by clicking the link below:\n\n"
-                f"{verify_url}\n\n"
-                f"If you didn't sign up, ignore this email."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-
+        
+        ref_id = serializer.validated_data['ref_id']
+        print('Has ref id', ref_id)
+        
+        if not ref_id:
+            # Send email
+            send_mail(
+                subject='Verify your MHPro account',
+                message=(
+                    f"Hi {user.first_name or user.email},\n\n"
+                    f"Please verify your email by clicking the link below:\n\n"
+                    f"{verify_url}\n\n"
+                    f"If you didn't sign up, ignore this email."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+            
+            
+        if ref_id:
+            print("loggin in by refereeal")
+            user.backend = settings.AUTHENTICATION_BACKENDS[0]
+            login(request, user)
+            
+            refresh = RefreshToken.for_user(user)
+            
+            return Response({
+                'status': 'success',
+                'message': 'Account created. Check your email to verify.',
+                'data': {
+                    'user': {
+                        'id': user.id,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                    },
+                    'profile': {
+                        'mh_user_id': user.profile.mh_user_id,
+                        'role': user.profile.role,
+                    },
+                    'tokens': {
+                            'refresh': str(refresh),
+                            'access': str(refresh.access_token),
+                    },
+                    'next_step': 'meet' if referral else 'verify_email',
+                },
+            }, status=status.HTTP_201_CREATED)
+            
+            # JWT tokens
+    
         return Response({
             'status': 'success',
             'message': 'Account created. Check your email to verify.',
@@ -82,7 +120,7 @@ class RegisterView(generics.CreateAPIView):
                     'mh_user_id': user.profile.mh_user_id,
                     'role': user.profile.role,
                 },
-                'next_step': 'verify_email',
+                'next_step': 'meet' if referral else 'verify_email',
             },
         }, status=status.HTTP_201_CREATED)
         
@@ -115,7 +153,7 @@ class VerifyEmailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Validate token
+        # # Validate token
         if not email_verification_token.check_token(user, token):
             return Response(
                 {'status': 'error', 'message': 'Invalid or expired token'},
@@ -128,15 +166,37 @@ class VerifyEmailView(APIView):
             profile.email_verified = True
             profile.email_verified_at = timezone.now()
             profile.save(update_fields=['email_verified', 'email_verified_at'])
-
+            
+            
+        user.backend = settings.AUTHENTICATION_BACKENDS[0]
+        login(request, user)
+        refresh = RefreshToken.for_user(user)
+        
         return Response({
             'status': 'success',
             'message': 'Email verified successfully.',
             'data': {
                 'email': user.email,
                 'mh_user_id': profile.mh_user_id,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                },
+                'profile': {
+                    'user_id': user.profile.user_id,
+                    'role': user.profile.role,
+                },
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
             },
         })
+        
+        
+        
         
 # class VerifyEmailView(APIView):
 #     permission_classes = [permissions.AllowAny]
@@ -308,6 +368,25 @@ class LoginView(APIView):
         
                 # ✅ Block unverified users (Google users are auto-verified)
         profile = getattr(user, 'profile', None)
+        if user.is_superuser:
+            def generate_mh_user_id():
+                """Generate a unique MHPro user ID"""
+                year = datetime.datetime.now().year
+                unique_part = uuid.uuid4().hex[:8].upper()
+                return f"MH-{year}-{unique_part}"
+            if not profile:
+                profile_defaults = {
+                    'mh_user_id': generate_mh_user_id(),
+                    'role': 'admin',
+                    'email_verified': True,
+                    'email_verified_at': datetime.datetime.now(),
+                }
+                    
+                profile = Profile.objects.create(user=user, **profile_defaults)
+                PatientProfile.objects.create(profile=profile)
+            else:
+                profile.role = 'admin'
+                profile.save()
         if profile and profile.signup_method == 'email' and not profile.email_verified:
             return Response({
                 'status': 'error',
@@ -384,6 +463,7 @@ class GoogleSignUpView(APIView):
 
     def post(self, request):
         google_token = request.data.get('token')
+        ref_id = request.data.get('ref_id', None)
         access_token = request.data.get('access_token')
 
         if not google_token: # and not access_token:
@@ -557,6 +637,42 @@ class GoogleSignUpView(APIView):
             DoctorProfile.objects.get_or_create(profile=profile)
 
         return profile
+    
+    def link_referral(self, ref_id, user, profile):
+        from datetime import timedelta
+
+        if not ref_id:
+            return
+        try:
+            referral = SpecialistReferral.objects.get(reference_id=ref_id)
+        except SpecialistReferral.DoesNotExist:
+            return
+
+        # Fill profile from referral — don't overwrite existing values
+        if not profile.phone and referral.phone:
+            profile.phone = referral.phone
+        if not profile.age and referral.age:
+            profile.age = referral.age
+        if not profile.gender and referral.sex:
+            profile.gender = referral.sex
+        if not profile.country and referral.country:
+            profile.country = referral.country
+        if not profile.state and referral.state:
+            profile.state = referral.state
+        if not profile.city and referral.city:
+            profile.city = referral.city
+
+        # Referral users are pre-verified
+        profile.save()
+
+        # Link referral
+        if referral.linked_user_id is None:
+            referral.linked_user = user
+            referral.linked_at = timezone.now()
+            referral.onboarding_complete = True
+            referral.save(update_fields=[
+                'linked_user', 'linked_at', 'onboarding_complete',
+            ])    
 
     # =====================================================
     # HELPERS
@@ -574,7 +690,7 @@ class GoogleSignUpView(APIView):
 
     def generate_mh_user_id(self):
         """Generate a unique MHPro user ID"""
-        year = datetime.now().year
+        year = datetime.datetime.now().year
         unique_part = uuid.uuid4().hex[:8].upper()
         return f"MH-{year}-{unique_part}"
     
@@ -1108,10 +1224,17 @@ class CurrentUserProfileView(APIView):
     def get(self, request):
         try:
             profile = request.user.profile
-            serializer = UserProfileSerializer(profile)
+            data = UserProfileSerializer(profile).data
+            if profile.role == 'patient' and hasattr(profile, 'patient_profile'):
+                from .serializers import PatientProfileSerializer
+                data['patient_profile'] = PatientProfileSerializer(profile.patient_profile).data
+                return Response({
+                    'status': 'success',
+                    'data': data
+                })
             return Response({
                 'status': 'success',
-                'data': serializer.data
+                'data': data
             })
         except Profile.DoesNotExist:
             return Response({
@@ -1298,7 +1421,7 @@ class CheckOnboardingStatusView(APIView):
         
         onboarding_complete = bool(
             user.first_name and user.last_name and 
-            profile.phone and profile.date_of_birth and profile.gender
+            profile.phone and profile.country and profile.gender
         )
         
         return Response({

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Your Appointment Is Confirmed</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f5;padding:32px 16px;">
+<tr>
+<td align="center">
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+<!-- HEADER with Marvelle Logo -->
+<tr>
+<td style="background:linear-gradient(135deg,#042b31 0%,#08606c 100%);padding:32px 32px 24px;text-align:center;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+        <tr>
+            <td style="vertical-align:middle;padding-right:10px;">
+                <div style="width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,0.15);display:inline-block;text-align:center;line-height:44px;font-size:22px;color:#6fe29b;">✚</div>
+            </td>
+            <td style="vertical-align:middle;">
+                <span style="font-size:24px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">Marvelle<span style="color:#6fe29b;">Health</span></span>
+            </td>
+        </tr>
+    </table>
+    <div style="color:rgba(255,255,255,0.7);font-size:11px;margin-top:10px;letter-spacing:2px;text-transform:uppercase;">MHPro Specialist Referral System</div>
+</td>
+</tr>
+
+<!-- BODY -->
+<tr>
+<td style="padding:36px 32px 24px;">
+
+    <div style="text-align:center;margin-bottom:20px;">
+        <div style="display:inline-block;width:72px;height:72px;border-radius:50%;background:#dcf8e7;line-height:72px;text-align:center;font-size:34px;color:#22653b;">✓</div>
+    </div>
+
+    <h1 style="font-size:22px;font-weight:700;color:#042b31;margin:0 0 12px;line-height:1.3;text-align:center;">Your appointment is confirmed!</h1>
+
+    <p style="color:#5a6162;font-size:15px;line-height:1.65;margin:0 0 20px;text-align:center;">
+        Hi <strong style="color:#06444d;">{{patient_name}}</strong>, you're all set. You'll be talking to <strong style="color:#06444d;">{{doctor_name}}</strong> from Marvelle Health.
+    </p>
+
+    <!-- APPOINTMENT CARD -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(135deg,#f1fcf5 0%,#dcf8e7 100%);border:2px solid #c1f3d4;border-radius:14px;margin:24px 0;">
+    <tr>
+    <td style="padding:24px 20px;text-align:center;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#4fa06e;font-weight:700;margin-bottom:8px;">Your Appointment</div>
+        <div style="font-size:22px;font-weight:800;color:#05373e;margin-bottom:4px;">{{appointment_date}}</div>
+        <div style="font-size:15px;color:#22653b;font-weight:600;margin-bottom:16px;">{{appointment_time}}</div>
+
+        <div style="border-top:1px solid #c1f3d4;padding-top:16px;margin-top:8px;">
+            <div style="font-size:13px;color:#5a6162;margin-bottom:4px;">with</div>
+            <div style="font-size:16px;font-weight:700;color:#042b31;">{{doctor_name}}</div>
+            <div style="font-size:13px;color:#4fa06e;">{{doctor_specialty}}</div>
+        </div>
+    </td>
+    </tr>
+    </table>
+
+    <!-- JOIN CTA -->
+    <div style="text-align:center;margin:28px 0;">
+        <a href="{{meeting_link}}" style="display:inline-block;background:#4dbb77;color:#ffffff;padding:16px 40px;border-radius:12px;font-weight:700;font-size:16px;text-decoration:none;">🎥 Join on {{appointment_date}}</a>
+    </div>
+
+    <div style="text-align:center;font-size:12px;color:#8f9495;margin-bottom:24px;">
+        Meeting link: <span style="font-family:'Courier New',monospace;color:#5a6162;">{{meeting_link}}</span>
+    </div>
+
+    <!-- REMINDERS -->
+    <div style="background:#fafbfb;border-radius:12px;padding:20px;margin:24px 0;">
+        <div style="font-size:14px;font-weight:700;color:#06444d;margin-bottom:12px;">Before your appointment</div>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+        <td style="width:24px;vertical-align:top;padding-bottom:10px;color:#4dbb77;font-size:14px;">●</td>
+        <td style="font-size:14px;color:#40494a;line-height:1.5;padding-bottom:10px;">
+            Test your <strong style="color:#05373e;">camera and microphone</strong> a few minutes early.
+        </td>
+        </tr>
+        <tr>
+        <td style="width:24px;vertical-align:top;padding-bottom:10px;color:#4dbb77;font-size:14px;">●</td>
+        <td style="font-size:14px;color:#40494a;line-height:1.5;padding-bottom:10px;">
+            Find a <strong style="color:#05373e;">quiet, private space</strong> where you can talk freely.
+        </td>
+        </tr>
+        <tr>
+        <td style="width:24px;vertical-align:top;padding-bottom:10px;color:#4dbb77;font-size:14px;">●</td>
+        <td style="font-size:14px;color:#40494a;line-height:1.5;padding-bottom:10px;">
+            Have a <strong style="color:#05373e;">notebook</strong> handy for any notes or questions.
+        </td>
+        </tr>
+        <tr>
+        <td style="width:24px;vertical-align:top;color:#4dbb77;font-size:14px;">●</td>
+        <td style="font-size:14px;color:#40494a;line-height:1.5;">
+            Log into your <strong style="color:#05373e;">Marvelle Health account</strong> at least 5 minutes before.
+        </td>
+        </tr>
+        </table>
+    </div>
+
+    <!-- REFERENCE -->
+    <div style="background:#05373e;color:#c1f3d4;padding:14px 18px;border-radius:10px;text-align:center;font-family:'Courier New',monospace;font-size:14px;letter-spacing:1px;margin:24px 0;">
+        Reference: {{reference_id}}
+    </div>
+
+    <!-- LOGIN NOTE -->
+    <p style="color:#8f9495;font-size:13px;line-height:1.6;margin:20px 0 0;text-align:center;">
+        Don't have an account yet? <a href="{{signup_link}}" style="color:#08606c;font-weight:600;">Create one here</a> to access this meeting and your records.
+    </p>
+
+    <p style="color:#8f9495;font-size:13px;line-height:1.6;margin:12px 0 0;text-align:center;">
+        Need to reschedule? Reply to this email or contact us at <a href="mailto:support@Marvellehealth.com" style="color:#08606c;">support@Marvellehealth.com</a>
+    </p>
+
+</td>
+</tr>
+
+<!-- FOOTER -->
+<tr>
+<td style="background:#fafbfb;padding:24px 32px;text-align:center;border-top:1px solid #eceded;">
+    <div style="font-weight:700;color:#06444d;font-size:14px;margin-bottom:6px;">Marvelle Health</div>
+    <div style="font-size:12px;color:#8f9495;line-height:1.6;">
+        This is an automated message from the MHPro Specialist Referral System.<br/>
+        If you did not schedule this appointment, please ignore this email.
+    </div>
+    <div style="margin-top:14px;">
+        <span style="display:inline-block;width:32px;height:32px;border-radius:50%;background:#eceded;line-height:32px;text-align:center;color:#5a6162;font-size:13px;margin:0 4px;">f</span>
+        <span style="display:inline-block;width:32px;height:32px;border-radius:50%;background:#eceded;line-height:32px;text-align:center;color:#5a6162;font-size:13px;margin:0 4px;">𝕏</span>
+        <span style="display:inline-block;width:32px;height:32px;border-radius:50%;background:#eceded;line-height:32px;text-align:center;color:#5a6162;font-size:13px;margin:0 4px;">in</span>
+    </div>
+    <div style="font-size:11px;color:#abafaf;margin-top:14px;">© 2026 Marvelle Health. All rights reserved.</div>
+</td>
+</tr>
+
+</table>
+
+</td>
+</tr>
+</table>
+
+</body>
+</html>

@@ -4,10 +4,12 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from .models import Profile, PatientProfile, DoctorProfile
+from referrals.models import SpecialistReferral    
 import datetime
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    
     """
     Simplified registration - only email and password
     """
@@ -23,9 +25,13 @@ class RegisterSerializer(serializers.ModelSerializer):
     )
     password2 = serializers.CharField(write_only=True, required=True)
     
+    ref_id = serializers.CharField(
+        write_only=True, required=False, allow_blank=True
+    )
+        
     class Meta:
         model = User
-        fields = ('email', 'password', 'password2')
+        fields = ('email', 'password', 'password2', 'ref_id')
     
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
@@ -35,6 +41,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data.pop('password2')
+        ref_id = validated_data.get('ref_id', None)
         email = validated_data['email']
         
         # Generate username from email (remove special chars)
@@ -48,14 +55,64 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password']
         )
         
+        referral = None
+        if ref_id:
+            try:
+                referral = SpecialistReferral.objects.get(reference_id=ref_id)
+                if referral.linked_user:
+                    return 'Exising', 402
+                print(referral, 'referral here')
+            except SpecialistReferral.DoesNotExist:
+                referral = None
+
+        if referral:
+            # Only fill fields that the user didn't provide
+            if not user.first_name and referral.first_name:
+                user.first_name = referral.first_name
+            if not user.last_name and referral.last_name:
+                user.last_name = referral.last_name
+            user.save(update_fields=['first_name', 'last_name'])
+        # return user
+    
+    
+        profile_defaults = {
+            'mh_user_id': self.generate_mh_user_id(),
+            'role': 'patient',
+            'email_verified': bool(referral),
+            'email_verified_at': datetime.datetime.now() if referral else None,
+        }
+
+        if referral:
+            profile_defaults.update({
+                'phone':   referral.phone or '',
+                'age':     referral.age,
+                'gender':  referral.sex or '',           # map sex → gender
+                'country': referral.country or '',
+                'state':   referral.state or '',
+                'city':    referral.city or '',
+                # date_of_birth not available — leave blank
+            })
+    
         # Create profile with auto-generated mh_user_id
-        mh_user_id=self.generate_mh_user_id()
-        profile = Profile.objects.create(
-            user=user,
-            mh_user_id=mh_user_id
-        )
+        # mh_user_id=self.generate_mh_user_id()
+        # profile = Profile.objects.create(
+        #     user=user,
+        #     mh_user_id=mh_user_id
+            
+        # )
+        # PatientProfile.objects.create(profile=profile)
+        profile = Profile.objects.create(user=user, **profile_defaults)
+        print(profile, 'profile_created', profile_defaults)
         PatientProfile.objects.create(profile=profile)
-        return user
+        if referral and referral.linked_user_id is None:
+            referral.linked_user = user
+            referral.linked_at = datetime.datetime.now()
+            referral.onboarding_complete = True
+            referral.save(update_fields=[
+                'linked_user', 'linked_at', 'onboarding_complete',
+            ])
+
+        return user, referral
     
     def generate_username(self, email):
         """Generate username from email"""

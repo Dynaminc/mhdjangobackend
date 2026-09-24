@@ -49,7 +49,7 @@ urlpatterns = [
     
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
-
+    path('api/v1/', include('referrals.urls')),
     path('api/v1/users/', include('accounts.urls')),
     path('api/v1/', include('appointments.urls')), #appointments/
     path('api/v1/', include('consultations.urls')),#consultations/

@@ -54,11 +54,13 @@ INSTALLED_APPS = [
     # Local apps
     
     'accounts',
+    
     'appointments',
     'consultations',
     'prescriptions',
     'labs',
     'chat',
+    'referrals',
     
     'payments',
     'notifications',
@@ -124,7 +126,7 @@ ROOT_URLCONF = 'mhpro.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],   # ✅ this line
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -203,8 +205,9 @@ ASGI_APPLICATION = 'mhpro.asgi.application'
 # REST Framework
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+# EMAIL_USE_TLS = False
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 GOOGLE_CLIENT_ID=os.getenv('GOOGLE_CLIENT_ID') 
@@ -246,6 +249,19 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+
+        # ✅ Referral-specific rates
+        'referral_anon': '3/hour',
+        'referral_email': '1/day',
+        'referral_user': '2/day',
+    },
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',

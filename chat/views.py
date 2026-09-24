@@ -42,32 +42,165 @@ class ConversationViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return ConversationCreateSerializer
         return ConversationSerializer
-
-    # apps/chat/views.py
+        
+        
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
-        
-        print(qs)
 
+        print("\n" + "=" * 72)
+        print("🔎 ConversationViewSet.get_queryset")
+        print("=" * 72)
+        print(f"user                = {user}")
+        print(f"is_authenticated    = {user.is_authenticated}")
+        print(f"is_staff            = {user.is_staff}")
+        print(f"DB total conv       = {Conversation.objects.count()}")
+
+        # ─────────────────────────────────────────────────────
+        # FULL DUMP of every conversation in the DB
+        # ─────────────────────────────────────────────────────
+        print("\n─── All conversations in DB ─────────────────────────────")
+        for c in Conversation.objects.select_related(
+            'patient_profile__profile__user',
+            'doctor_profile__profile__user',
+            'consultation',
+        ).order_by('-created_at'):
+            try:
+                p_user = c.patient_profile.profile.user
+                patient_label = f"{p_user.get_full_name() or p_user.email} ({c.patient_profile.profile.mh_user_id})"
+            except Exception as e:
+                patient_label = f"<error: {e}>"
+
+            try:
+                d_user = c.doctor_profile.profile.user if c.doctor_profile else None
+                doctor_label = f"Dr. {d_user.get_full_name() or d_user.email}" if d_user else "—"
+            except Exception as e:
+                doctor_label = f"<error: {e}>"
+
+            print(
+                f"  id={c.id:<4} "
+                f"conv_id={c.conversation_id} "
+                f"pp_id={c.patient_profile_id} "
+                f"dp_id={c.doctor_profile_id} "
+                f"consult={c.consultation_id} "
+                f"active={c.is_active} "
+                f"| patient={patient_label} "
+                f"| doctor={doctor_label} "
+                f"| started={c.started_at}"
+            )
+        print("─── End DB dump ────────────────────────────────────────\n")
+
+        # ─────────────────────────────────────────────────────
+        # Resolve profile
+        # ─────────────────────────────────────────────────────
         if not hasattr(user, 'profile'):
+            print("❌ user has no .profile → returning NONE")
+            print("=" * 72 + "\n")
             return qs.none()
 
-        # Staff see everything
+        profile = user.profile
+        print(f"profile.id          = {profile.id}")
+        print(f"profile.role        = {profile.role}")
+        print(f"profile.mh_user_id  = {profile.mh_user_id}")
+
+        # ─────────────────────────────────────────────────────
+        # Staff — see everything
+        # ─────────────────────────────────────────────────────
         if user.is_staff:
-            return qs
+            result = qs
+            print(f"\n✅ staff → returning ALL ({result.count()})")
+            print("─── Returning to caller ────────────────────────────────")
+            for c in result:
+                print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
+            print("=" * 72 + "\n")
+            return result
 
-        # Patients see only their own
-        if hasattr(user.profile, 'patient_profile'):
-            return qs.filter(patient_profile=user.profile.patient_profile)
+        # ─────────────────────────────────────────────────────
+        # Patient — only their own
+        # ─────────────────────────────────────────────────────
+        patient_profile = getattr(profile, 'patient_profile', None)
+        if patient_profile is not None:
+            print(f"\n👤 PATIENT branch")
+            print(f"patient_profile.id  = {patient_profile.id}")
 
-        # Doctors see everything (or restrict to their own — your choice)
-        if hasattr(user.profile, 'doctor_profile'):
-            return qs
-            # If you want "only mine", use:
-            # return qs.filter(doctor_profile=user.profile.doctor_profile)
+            raw = Conversation.objects.filter(patient_profile=patient_profile)
+            print(f"raw conversations for this patient = {raw.count()}")
+            for c in raw:
+                print(f"   → id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
 
-            return qs.none()
+            result = qs.filter(patient_profile=patient_profile)
+            print(f"\nfiltered qs count   = {result.count()}")
+            print("─── Returning to caller ────────────────────────────────")
+            for c in result:
+                print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
+            print("=" * 72 + "\n")
+            return result
+
+        # ─────────────────────────────────────────────────────
+        # Doctor — everything (or restrict to their own)
+        # ─────────────────────────────────────────────────────
+        if hasattr(profile, 'doctor_profile'):
+            doctor_profile = profile.doctor_profile
+            print(f"\n🩺 DOCTOR branch")
+            print(f"doctor_profile.id   = {doctor_profile.id}")
+
+            raw = Conversation.objects.filter(doctor_profile=doctor_profile)
+            print(f"raw conversations for this doctor = {raw.count()}")
+            for c in raw:
+                print(f"   → id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id} dp_id={c.doctor_profile_id}")
+
+            # Option A — doctors see everything
+            result = qs
+            print(f"\nreturning ALL ({result.count()})")
+            print("─── Returning to caller ────────────────────────────────")
+            for c in result:
+                print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id} dp_id={c.doctor_profile_id}")
+            print("=" * 72 + "\n")
+            return result
+
+            # Option B — only their own (uncomment if you prefer)
+            # result = qs.filter(doctor_profile=doctor_profile)
+            # print(f"filtered qs count = {result.count()}")
+            # return result
+
+        print("❌ unrecognized role → returning NONE")
+        print("=" * 72 + "\n")
+        return qs.none()
+           
+    # apps/chat/views.py
+    # def get_queryset(self):
+    #     qs = super().get_queryset()
+    #     user = self.request.user
+    #     return qs.filter(patient_profile=user.profile.patient_profile)        
+    #     print(qs)
+    #     for item in list(qs):
+    #         patient_profile = PatientProfile.objects.filter(profile=user.profile).first()
+    #         print(item.patient_profile, item.patient_profile_id, patient_profile, patient_profile.id)
+    #         # print(item['mh_user_id'])
+    #         # user.profile.patient_profile
+
+    #     if not hasattr(user, 'profile'):
+    #         return qs.none()
+
+    #     # Staff see everything
+    #     if user.is_staff:
+    #         return qs
+
+    #     # Patients see only their own
+    #     if hasattr(user.profile, 'patient_profile'):
+    #         print(user.profile, 'prile hre ',user.profile.patient_profile)
+            
+    #         print('Profile profile',user.profile.patient_profile.id)
+    #         print('dede', qs.filter(patient_profile=user.profile.patient_profile))
+    #         return qs.filter(patient_profile=user.profile.patient_profile)
+
+    #     # Doctors see everything (or restrict to their own — your choice)
+    #     if hasattr(user.profile, 'doctor_profile'):
+    #         return qs
+    #         # If you want "only mine", use:
+    #         # return qs.filter(doctor_profile=user.profile.doctor_profile)
+
+            # return qs.none()
     # def get_queryset(self):
     #     qs = super().get_queryset()
     #     user = self.request.user
