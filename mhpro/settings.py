@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-vk!1&ts!+(gr2kmp$@l9z#%-m@reulakiqt8+!7r1m((b+$ot+
 DEBUG = True
 DEBUG_PROPAGATE_EXCEPTIONS = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
