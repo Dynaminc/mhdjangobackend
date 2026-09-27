@@ -1216,6 +1216,7 @@ class ResetPasswordConfirmView(APIView):
 
 
 class CurrentUserProfileView(APIView):
+    from .serializers import PatientProfileSerializer
     """
     Get the current authenticated user's profile.
     """
@@ -1225,13 +1226,15 @@ class CurrentUserProfileView(APIView):
         try:
             profile = request.user.profile
             data = UserProfileSerializer(profile).data
-            if profile.role == 'patient' and hasattr(profile, 'patient_profile'):
-                from .serializers import PatientProfileSerializer
-                data['patient_profile'] = PatientProfileSerializer(profile.patient_profile).data
-                return Response({
-                    'status': 'success',
-                    'data': data
-                })
+            # if profile.role == 'patient' and hasattr(profile, 'patient_profile'):
+            print("Yes Patient is  a ", profile, profile.role)
+            
+            data['patient_profile'] = PatientProfileSerializer(profile.patient_profile).data
+            print('data', data)
+            return Response({
+                'status': 'success',
+                'data': data
+            })
             return Response({
                 'status': 'success',
                 'data': data

@@ -83,6 +83,15 @@ class RegisterSerializer(serializers.ModelSerializer):
         }
 
         if referral:
+            print({
+                'phone':   referral.phone or '',
+                'age':     referral.age,
+                'gender':  referral.sex or '',           # map sex → gender
+                'country': referral.country or '',
+                'state':   referral.state or '',
+                'city':    referral.city or '',
+                # date_of_birth not available — leave blank
+            })
             profile_defaults.update({
                 'phone':   referral.phone or '',
                 'age':     referral.age,
