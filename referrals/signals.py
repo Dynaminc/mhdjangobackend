@@ -87,11 +87,11 @@ def _send_referral_email(referral, template):
         'referral_cancelled': f"Referral {referral.reference_id} cancelled",
     }
     print("we are seingin maile right now")
-    # send_mail(
-    #     subject=subject_map.get(template, f"Referral {referral.reference_id} update"),
-    #     message=plain_message,
-    #     from_email=settings.DEFAULT_FROM_EMAIL,
-    #     recipient_list=[referral.email],
-    #     html_message=html_message,
-    #     fail_silently=True,
-    # )
+    send_mail(
+        subject=subject_map.get(template, f"Referral {referral.reference_id} update"),
+        message=plain_message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[referral.email],
+        html_message=html_message,
+        fail_silently=True,
+    )
