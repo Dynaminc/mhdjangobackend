@@ -126,7 +126,7 @@ class Appointment(BaseModel):
     clinic = models.ForeignKey(
         Clinic,
         on_delete=models.CASCADE,
-        related_name='appointments'
+        related_name='appointments',
         null=True,  # Allow NULL for first-available pattern
         blank=True,
     )
