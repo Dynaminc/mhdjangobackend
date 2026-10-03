@@ -127,52 +127,115 @@ class ConsultationCreateSerializer(serializers.Serializer):
     def create(self, validated_data):
         request = self.context['request']
         mh_user_id = validated_data.pop('mh_user_id')
-        doctor_id = validated_data.pop('doctor_id', None)
 
-        # ✅ Ignore any patient_profile the client sent
+        # Strip anything the client might have sent that we don't trust
         validated_data.pop('patient_profile', None)
         validated_data.pop('doctor_profile', None)
         validated_data.pop('appointment', None)
         validated_data.pop('appointment_id', None)
         validated_data.pop('doctor_id', None)
 
-        # 1. Resolve Profile → PatientProfile (auto-create if missing)
-        # try:
-        profile = Profile.objects.get(mh_user_id=mh_user_id)
-        # except Profile.DoesNotExist:
-        #     raise serializers.ValidationError(
-        #         {"mh_user_id": f"Profile '{mh_user_id}' not found"}
-        #     )
+        # ─────────────────────────────────────────────────────
+        # 1. Resolve Profile → PatientProfile (auto-create)
+        # ─────────────────────────────────────────────────────
+        try:
+            profile = Profile.objects.get(mh_user_id=mh_user_id)
+        except Profile.DoesNotExist:
+            raise serializers.ValidationError(
+                {"mh_user_id": f"Profile '{mh_user_id}' not found"}
+            )
 
         patient_profile = getattr(profile, 'patient_profile', None)
         if patient_profile is None:
             patient_profile = PatientProfile.objects.create(profile=profile)
 
-        # # 2. Resolve doctor
-        # doctor_id = request.user.profile.doctor_profile
-        # if doctor_id:
-        #     try:
-        #         doctor_profile = DoctorProfile.objects.get(id=doctor_id)
-        #     except DoctorProfile.DoesNotExist:
-        #         raise serializers.ValidationError(
-        #             {"doctor_id": f"Doctor {doctor_id} not found"}
-        #         )
-        # else:
-            # Fall back to the logged-in doctor
+        # ─────────────────────────────────────────────────────
+        # 2. Resolve doctor from request.user
+        # ─────────────────────────────────────────────────────
         doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
         if not doctor_profile:
             raise serializers.ValidationError(
-                {"detail": "doctor_id is required (no doctor attached to your account)"}
+                {"detail": "No doctor attached to your account."}
             )
 
-        # 3. Create consultation
-        print('hererere')
+        # ─────────────────────────────────────────────────────
+        # 3. ✅ Reuse an existing ongoing consultation if present
+        # ─────────────────────────────────────────────────────
+        existing = Consultation.objects.filter(
+            patient_profile=patient_profile,
+            doctor_profile=doctor_profile,
+            status='ongoing',
+        ).order_by('-created_at').first()
+
+        if existing:
+            # Optionally update the passed-in fields (so re-submits refresh the record)
+            for field in ['hpc', 'symptoms', 'duration', 'vitals',
+                        'assessment', 'plan', 'type', 'clinic_location']:
+                if field in validated_data:
+                    setattr(existing, field, validated_data[field])
+            existing.save()
+            return existing
+
+        # ─────────────────────────────────────────────────────
+        # 4. Otherwise create a fresh consultation
+        # ─────────────────────────────────────────────────────
         return Consultation.objects.create(
             patient_profile=patient_profile,
             doctor_profile=doctor_profile,
             status='ongoing',
             **validated_data,
         )
+    
+
+    # def create(self, validated_data):
+    #     request = self.context['request']
+    #     mh_user_id = validated_data.pop('mh_user_id')
+    #     doctor_id = validated_data.pop('doctor_id', None)
+
+    #     # ✅ Ignore any patient_profile the client sent
+    #     validated_data.pop('patient_profile', None)
+    #     validated_data.pop('doctor_profile', None)
+    #     validated_data.pop('appointment', None)
+    #     validated_data.pop('appointment_id', None)
+    #     validated_data.pop('doctor_id', None)
+
+    #     # 1. Resolve Profile → PatientProfile (auto-create if missing)
+    #     # try:
+    #     profile = Profile.objects.get(mh_user_id=mh_user_id)
+    #     # except Profile.DoesNotExist:
+    #     #     raise serializers.ValidationError(
+    #     #         {"mh_user_id": f"Profile '{mh_user_id}' not found"}
+    #     #     )
+
+    #     patient_profile = getattr(profile, 'patient_profile', None)
+    #     if patient_profile is None:
+    #         patient_profile = PatientProfile.objects.create(profile=profile)
+
+    #     # # 2. Resolve doctor
+    #     # doctor_id = request.user.profile.doctor_profile
+    #     # if doctor_id:
+    #     #     try:
+    #     #         doctor_profile = DoctorProfile.objects.get(id=doctor_id)
+    #     #     except DoctorProfile.DoesNotExist:
+    #     #         raise serializers.ValidationError(
+    #     #             {"doctor_id": f"Doctor {doctor_id} not found"}
+    #     #         )
+    #     # else:
+    #         # Fall back to the logged-in doctor
+    #     doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
+    #     if not doctor_profile:
+    #         raise serializers.ValidationError(
+    #             {"detail": "doctor_id is required (no doctor attached to your account)"}
+    #         )
+
+    #     # 3. Create consultation
+    #     print('hererere')
+    #     return Consultation.objects.create(
+    #         patient_profile=patient_profile,
+    #         doctor_profile=doctor_profile,
+    #         status='ongoing',
+    #         **validated_data,
+    #     )
         
         
 

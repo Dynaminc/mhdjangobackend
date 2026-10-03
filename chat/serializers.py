@@ -11,11 +11,17 @@ from accounts.models import Profile, PatientProfile
 from consultations.models import Consultation
 
 
+# apps/chat/serializers.py
 class ConversationSerializer(serializers.ModelSerializer):
     """Read serializer"""
+
+    patient_id = serializers.SerializerMethodField()
+    doctor_id  = serializers.SerializerMethodField()
+
     patient_name = serializers.SerializerMethodField()
-    doctor_name = serializers.SerializerMethodField()
-    mh_user_id = serializers.SerializerMethodField()
+    doctor_name  = serializers.SerializerMethodField()
+    mh_user_id   = serializers.SerializerMethodField()
+
     consultation_id = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
@@ -25,6 +31,8 @@ class ConversationSerializer(serializers.ModelSerializer):
             'conversation_id',
             'consultation', 'consultation_id',
             'mh_user_id',
+            'patient_id',        # ← new
+            'doctor_id',         # ← new
             'patient_name',
             'doctor_name',
             'is_active',
@@ -34,16 +42,82 @@ class ConversationSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
+    # ─── ids ─────────────────────────────────────────────
+    def get_patient_id(self, obj):
+        try:
+            return obj.patient_profile.profile.user_id
+        except AttributeError:
+            return None
+
+    def get_doctor_id(self, obj):
+        try:
+            return obj.doctor_profile.profile.user_id
+        except AttributeError:
+            return None
+
+    # ─── names ───────────────────────────────────────────
     def get_patient_name(self, obj):
-        return obj.patient_profile.profile.user.get_full_name()
+        try:
+            return obj.patient_profile.profile.user.get_full_name()
+        except AttributeError:
+            return None
 
     def get_doctor_name(self, obj):
-        if obj.doctor_profile:
+        try:
             return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
-        return None
+        except AttributeError:
+            return None
 
     def get_mh_user_id(self, obj):
-        return obj.patient_profile.profile.mh_user_id
+        try:
+            return obj.patient_profile.profile.mh_user_id
+        except AttributeError:
+            return None
+        
+# class ConversationSerializer(serializers.ModelSerializer):
+#     """Read serializer"""
+#     patient_name = serializers.SerializerMethodField()
+#     doctor_name = serializers.SerializerMethodField()
+#     patient_id = serializers.IntegerField(source='patient_profile.profile.user_id', read_only=True)
+#     doctor_id  = serializers.IntegerField(source='doctor_profile.profile.user_id',  read_only=True)
+    
+#     # patient_id = serializers.IntegerField(
+#     #     source='patient_profile.user.id', read_only=True
+#     # )
+#     # doctor_id = serializers.IntegerField(
+#     #     source='doctor_profile.user.id', read_only=True
+#     # )
+#     mh_user_id = serializers.SerializerMethodField()
+#     consultation_id = serializers.IntegerField(read_only=True, allow_null=True)
+
+#     class Meta:
+#         model = Conversation
+#         fields = [
+#             'id',
+#             'conversation_id',
+#             'consultation', 'consultation_id',
+#             'mh_user_id',            
+#             'patient_id',        # ← new
+#             'doctor_id',         # ← new
+#             'patient_name',
+#             'doctor_name',
+#             'is_active',
+#             'started_at',
+#             'ended_at',
+#             'created_at',
+#             'updated_at',
+#         ]
+
+#     def get_patient_name(self, obj):
+#         return obj.patient_profile.profile.user.get_full_name()
+
+#     def get_doctor_name(self, obj):
+#         if obj.doctor_profile:
+#             return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
+#         return None
+
+#     def get_mh_user_id(self, obj):
+#         return obj.patient_profile.profile.mh_user_id
 
 
 # apps/chat/serializers.py
@@ -76,14 +150,14 @@ class ConversationCreateSerializer(serializers.Serializer):
         if patient_profile is None:
             patient_profile = PatientProfile.objects.create(profile=profile)
 
-        # 2. Doctor
+        # 2. Doctor (caller must be a doctor)
         doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
         if not doctor_profile:
             raise serializers.ValidationError(
                 {"detail": "Only doctors can start a conversation."}
             )
 
-        # 3. Consultation (optional)
+        # 3. Optional consultation (validated, not required)
         consultation = None
         if consultation_id:
             try:
@@ -92,35 +166,40 @@ class ConversationCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"consultation_id": f"Consultation {consultation_id} not found"}
                 )
-            if consultation.patient_profile != patient_profile:
+            if consultation.patient_profile_id != patient_profile.id:
                 raise serializers.ValidationError(
                     {"consultation_id": "Consultation does not belong to this patient"}
                 )
 
-        # 4. Reuse active conversation if it exists
-        existing = Conversation.objects.filter(
-            patient_profile=patient_profile,
-            doctor_profile=doctor_profile,
-            consultation=consultation,
-            is_active=True,
-        ).first()
+        # 4. ★ Reuse ANY active conversation between this patient and doctor.
+        #    Do not include `consultation` in the filter — None vs non-None
+        #    should not force a new row.
+        existing = (
+            Conversation.objects
+            .filter(
+                patient_profile=patient_profile,
+                doctor_profile=doctor_profile,
+                is_active=True,
+            )
+            .order_by('-created_at')
+            .first()
+        )
         if existing:
+            # Optional: attach the consultation if the row didn't have one.
+            if consultation and existing.consultation_id is None:
+                existing.consultation = consultation
+                existing.save(update_fields=['consultation', 'updated_at'])
             return existing
 
-        # 5. Generate the UUID explicitly
-        new_id = str(uuid.uuid4())
-
-        # Double-check uniqueness (extremely unlikely to collide)
-        while Conversation.objects.filter(conversation_id=new_id).exists():
-            new_id = str(uuid.uuid4())
-
+        # 5. Create a new one
         return Conversation.objects.create(
-            conversation_id=new_id,
+            conversation_id=str(uuid.uuid4()),
             patient_profile=patient_profile,
             doctor_profile=doctor_profile,
             consultation=consultation,
             is_active=validated_data.get('is_active', True),
         )
+        
         
 class ConversationDetailSerializer(ConversationSerializer):
     """

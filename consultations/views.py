@@ -1,5 +1,5 @@
 from django.shortcuts import render
-
+from django.db.models.functions import Length
 # Create your views here.
 # apps/consultations/views.py
 from rest_framework.views import APIView
@@ -98,21 +98,25 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     # QUERYSET
     # =====================================================
     def get_queryset(self):
-        queryset = super().get_queryset()
-        user = self.request.user
+        qs = super().get_queryset()
 
+        # ✅ Only return consultations that actually have HPC content
+        qs = qs.annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10)
+
+        user = self.request.user
         if not hasattr(user, 'profile'):
-            return queryset.none()
+            return qs.none()
 
         if hasattr(user.profile, 'patient_profile'):
-            return queryset.filter(patient_profile=user.profile.patient_profile)
+            return qs.filter(patient_profile=user.profile.patient_profile)
 
         if hasattr(user.profile, 'doctor_profile'):
-            return queryset.filter(doctor_profile=user.profile.doctor_profile)
+            return qs.filter(doctor_profile=user.profile.doctor_profile)
 
         if user.is_staff:
-            return queryset
-        return queryset.none()
+            return qs
+
+        return qs.none()
 
     # =====================================================
     # PERMISSIONS
@@ -226,10 +230,11 @@ class ConsultationViewSet(viewsets.ModelViewSet):
                 {'status': 'error', 'message': error},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        
 
         consultations = Consultation.objects.filter(
             patient_profile=patient_profile
-        ).order_by('-created_at')
+        ).annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10).order_by('-created_at')
         serializer = ConsultationSerializer(consultations, many=True)
 
         return Response({
