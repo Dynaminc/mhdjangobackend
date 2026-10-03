@@ -56,37 +56,37 @@ class Clinic(BaseModel):
         # ).distinct()
 
 
-class DoctorAvailability(BaseModel):
-    """Doctor's availability schedule"""
-    doctor_profile = models.ForeignKey(
-        DoctorProfile,
-        on_delete=models.CASCADE,
-        related_name='availability'
-    )
+# class DoctorAvailability(BaseModel):
+#     """Doctor's availability schedule"""
+#     doctor_profile = models.ForeignKey(
+#         DoctorProfile,
+#         on_delete=models.CASCADE,
+#         related_name='availability'
+#     )
     
-    DAY_CHOICES = (
-        (0, 'Monday'),
-        (1, 'Tuesday'),
-        (2, 'Wednesday'),
-        (3, 'Thursday'),
-        (4, 'Friday'),
-        (5, 'Saturday'),
-        (6, 'Sunday'),
-    )
+#     DAY_CHOICES = (
+#         (0, 'Monday'),
+#         (1, 'Tuesday'),
+#         (2, 'Wednesday'),
+#         (3, 'Thursday'),
+#         (4, 'Friday'),
+#         (5, 'Saturday'),
+#         (6, 'Sunday'),
+#     )
     
-    day_of_week = models.IntegerField(choices=DAY_CHOICES)
-    start_time = models.TimeField()
-    end_time = models.TimeField()
-    is_available = models.BooleanField(default=True)
+#     day_of_week = models.IntegerField(choices=DAY_CHOICES)
+#     start_time = models.TimeField()
+#     end_time = models.TimeField()
+#     is_available = models.BooleanField(default=True)
     
-    # Optional: specific date override
-    specific_date = models.DateField(null=True, blank=True)
+#     # Optional: specific date override
+#     specific_date = models.DateField(null=True, blank=True)
     
-    class Meta:
-        ordering = ['day_of_week', 'start_time']
+#     class Meta:
+#         ordering = ['day_of_week', 'start_time']
     
-    def __str__(self):
-        return f"{self.doctor_profile} - {self.get_day_of_week_display()} {self.start_time}-{self.end_time}"
+#     def __str__(self):
+#         return f"{self.doctor_profile} - {self.get_day_of_week_display()} {self.start_time}-{self.end_time}"
 
 
 class Appointment(BaseModel):

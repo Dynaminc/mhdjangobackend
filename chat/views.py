@@ -60,7 +60,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         # FULL DUMP of every conversation in the DB
         # ─────────────────────────────────────────────────────
         print("\n─── All conversations in DB ─────────────────────────────")
-        for c in Conversat/ion.objects.select_related(
+        for c in Conversation.objects.select_related(
             'patient_profile__profile__user',
             'doctor_profile__profile__user',
             'consultation',
