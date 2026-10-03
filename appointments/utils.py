@@ -65,10 +65,10 @@ def get_available_doctors(doctors, date, start_time, end_time):
     
     # Doctors that have availability set for this day
     available_doctors = doctors.filter(
-        availability__day_of_week=day_of_week,
-        availability__is_available=True,
-        availability__start_time__lte=start_time,
-        availability__end_time__gte=end_time
+       availabilities__day_of_week=day_of_week,
+        availabilities__is_available=True,
+        availabilities__start_time__lte=start_time,
+        availabilities__end_time__gte=end_time
     ).distinct()
     
     # Exclude doctors who already have appointments at this time
