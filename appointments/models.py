@@ -127,6 +127,8 @@ class Appointment(BaseModel):
         Clinic,
         on_delete=models.CASCADE,
         related_name='appointments'
+        null=True,  # Allow NULL for first-available pattern
+        blank=True,
     )
     
     # Appointment details
