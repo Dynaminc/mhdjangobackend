@@ -93,7 +93,7 @@ class ProfileAdmin(admin.ModelAdmin):
     fieldsets = (
         ('User Information', {
             'fields': ('user', 'role', 'phone', 'age', 'gender', 'date_of_birth')
-        }),
+        }), 
         ('Status', {
             'fields': ('is_online', 'login_count', 'last_login_ip', 'last_logout_at')
         }),
@@ -154,7 +154,7 @@ class DoctorProfileAdmin(admin.ModelAdmin):
             'fields': ('is_available',)
         }),
         ('Additional Info', {
-            'fields': ('hospital_affiliation', 'education', 'certifications', 'bio'),
+            'fields': ('hospital_affiliation', 'education', 'certifications'),
             'classes': ('collapse',)
         }),
         ('Social Links', {

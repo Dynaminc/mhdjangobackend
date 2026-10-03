@@ -32,7 +32,7 @@ class Clinic(BaseModel):
     )
     allow_online_booking = models.BooleanField(default=True)
     requires_doctor_selection = models.BooleanField(
-        default=True,
+        default=False,
         help_text="If True, patients must select a doctor. If False, system assigns."
     )
     
