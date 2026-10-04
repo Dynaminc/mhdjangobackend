@@ -903,6 +903,7 @@ class QueueViewSet(viewsets.GenericViewSet):
         
         patient = request.user.profile
         patient_id = patient.id
+        mh_user_id = patient.mh_user_id
         name = request.user.get_full_name()
         
         if queue.is_in_queue(patient_id):
@@ -913,7 +914,7 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'position': position['position'] if position else None
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        result = queue.join(patient_id, name)
+        result = queue.join(patient_id, mh_user_id, name)
         
         if 'error' in result:
             return Response({
@@ -987,7 +988,8 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'patient': {
                     'id': patient.id,
                     'name': patient.profile.user.get_full_name(),
-                    'email': patient.profile.user.email
+                    'email': patient.profile.user.email,
+                    'idNumber': patient.profile.mh_user_id,
                 },
                 'remaining': result['remaining']
             })
@@ -1050,7 +1052,8 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'patient': {
                     'id': patient.id,
                     'name': patient.profile.user.get_full_name(),
-                    'email': patient.profile.user.email
+                    'email': patient.profile.user.email,
+                    'idNumber': patient.profile.mh_user_id,
                 },
                 'remaining': result['remaining']
             })

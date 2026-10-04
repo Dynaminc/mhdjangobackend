@@ -10,8 +10,9 @@ class SimpleQueue:
         self._names = {}           # Store patient names
         self._admitted = []        # Track admitted patients (history)
         self._completed = []       # Track completed patients (history)
+        self.mh_user_id = {}
     
-    def join(self, patient_id, name=""):
+    def join(self, patient_id, mh_user_id, name=""):
         """Add patient to queue"""
         if patient_id in self._queue:
             return {"error": "Already in queue"}
@@ -20,6 +21,7 @@ class SimpleQueue:
         position = len(self._queue)
         self._position_cache[patient_id] = position
         self._heartbeats[patient_id] = time.time()
+        self.mh_user_id[patient_id] = mh_user_id
         if name:
             self._names[patient_id] = name
         
@@ -37,6 +39,7 @@ class SimpleQueue:
         self._queue.remove(patient_id)
         self._heartbeats.pop(patient_id, None)
         self._names.pop(patient_id, None)
+        self.mh_user_id.pop(patient_id, None)
         self._update_positions()
         
         return {"success": True}
@@ -80,6 +83,7 @@ class SimpleQueue:
         self._admitted.append({
             "patient_id": patient_id,
             "name": self._names.get(patient_id, ""),
+            "mh_user_id": self.mh_user_id.get(patient_id, ""),
             "admitted_at": time.time()
         })
         
@@ -87,6 +91,7 @@ class SimpleQueue:
             "success": True,
             "patient_id": patient_id,
             "name": self._names.get(patient_id, ""),
+            "mh_user_id": self.mh_user_id.get(patient_id, ""),
             "remaining": len(self._queue),
             "message": f"Patient {self._names.get(patient_id, patient_id)} admitted"
         }
@@ -164,6 +169,7 @@ class SimpleQueue:
                 "patient_id": patient_id,
                 "position": i,
                 "name": self._names.get(patient_id, ""),
+                "mh_user_id": self.mh_user_id.get(patient_id, ""),
                 "is_online": is_online,
                 "last_seen": datetime.fromtimestamp(last_seen).isoformat() if last_seen else None
             })

@@ -994,16 +994,56 @@ class ProfileViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'], url_path='patients')
     def get_patients(self, request):
-        """✅ Get ALL patient profiles (not just current user)"""
-        # ✅ Use the model manager directly, NOT self.get_queryset()
-        patients = Profile.objects.filter(role='patient')
-        print('Patients found:', patients.count())  # Should show > 0
-        serializer = self.get_serializer(patients, many=True)
+        # from .queue_service import queue
+        
+        profile = getattr(request.user, 'profile', None)
+        if profile is None or profile.role != 'doctor':
+            return Response({'status': 'success', 'count': 0, 'data': []})
+
+        doctor_profile = getattr(profile, 'doctor_profile', None)
+        if doctor_profile is None:
+            return Response({'status': 'success', 'count': 0, 'data': []})
+
+        from chat.models import Conversation
+
+        conversations = (
+            Conversation.objects
+            .filter(doctor_profile=doctor_profile, is_active=True)
+            .select_related('patient_profile__profile__user')
+            .order_by('-started_at')
+        )
+
+        # ✅ Collect Profile instances, not PatientProfile
+        seen = set()
+        profile_qs = []
+        for conv in conversations:
+            pp = conv.patient_profile
+            if pp is None:
+                continue
+            profile_obj = pp.profile
+            if profile_obj.id in seen:
+                continue
+            seen.add(profile_obj.id)
+            profile_qs.append(profile_obj)
+
+        serializer = self.get_serializer(profile_qs, many=True)
         return Response({
             'status': 'success',
-            'count': patients.count(),
-            'data': serializer.data
+            'count': len(profile_qs),
+            'data': serializer.data,
         })
+    # def get_patients(self, request):
+    #     """✅ Get ALL patient profiles (not just current user)"""
+    #     # ✅ Use the model manager directly, NOT self.get_queryset()
+        
+    #     patients = Profile.objects.filter(role='patient')
+    #     print('Patients found:', patients.count())  # Should show > 0
+    #     serializer = self.get_serializer(patients, many=True)
+    #     return Response({
+    #         'status': 'success',
+    #         'count': patients.count(),
+    #         'data': serializer.data
+    #     })
     
     @action(detail=False, methods=['get'], url_path='admins')
     def get_admins(self, request):
