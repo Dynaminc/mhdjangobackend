@@ -216,296 +216,349 @@ class MedicationCatalog(BaseModel):
             models.Index(fields=['is_active']),
         ]
 
-
-# ============================================
-# PRESCRIPTION
-# ============================================
 # apps/prescriptions/models.py
+import uuid
 from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
-from datetime import timedelta
+
 from accounts.models import BaseModel, DoctorProfile, PatientProfile
+from consultations.models import Consultation
 
 
 class Prescription(BaseModel):
-    """Medication prescription issued by a doctor"""
+    """A prescription = one item on the pharmacy list."""
 
-    STATUS_CHOICES = (
-        ('active', 'Active'),
-        ('suspended', 'Suspended'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
-        ('expired', 'Expired'),
-    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    FREQUENCY_CHOICES = (
-        ('once_daily', 'Once daily'),
-        ('twice_daily', 'Twice daily'),
-        ('three_times_daily', 'Three times daily'),
-        ('four_times_daily', 'Four times daily'),
-        ('every_6_hours', 'Every 6 hours'),
-        ('every_8_hours', 'Every 8 hours'),
-        ('every_12_hours', 'Every 12 hours'),
-        ('once_weekly', 'Once weekly'),
-        ('twice_weekly', 'Twice weekly'),
-        ('as_needed', 'As needed'),
-        ('other', 'Other'),
-    )
-
-    DURATION_UNIT_CHOICES = (
-        ('days', 'Days'),
-        ('weeks', 'Weeks'),
-        ('months', 'Months'),
-        ('indefinite', 'Indefinite'),
-    )
-
-    # -------------------------------------------------
-    # Relationships
-    # -------------------------------------------------
-    prescription_number = models.CharField(
-        max_length=50, unique=True, db_index=True,
-        help_text="Auto-generated (e.g., RX-2026-0001)"
-    )
-    patient_profile = models.ForeignKey(
-        PatientProfile, on_delete=models.CASCADE,
-        related_name='prescriptions'
-    )
-    doctor_profile = models.ForeignKey(
-        DoctorProfile, on_delete=models.CASCADE,
-        related_name='prescriptions'
-    )
-
-    # -------------------------------------------------
-    # Medication (frontend sends only the name)
-    # -------------------------------------------------
-    medication_name = models.CharField(
-        max_length=255,
-        help_text="Name of the medication"
-    )
-
-    # -------------------------------------------------
-    # Dosage & instructions
-    # -------------------------------------------------
-    dosage = models.CharField(max_length=50)
-    frequency = models.CharField(
-        max_length=50, choices=FREQUENCY_CHOICES, default='once_daily'
-    )
-    frequency_custom = models.CharField(max_length=100, blank=True)
-
-    duration_value = models.IntegerField(default=30)
-    duration_unit = models.CharField(
-        max_length=20, choices=DURATION_UNIT_CHOICES, default='days'
-    )
-
-    quantity = models.IntegerField(validators=[MinValueValidator(1)])
-    refills = models.IntegerField(
-        default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(12)]
-    )
-    refills_used = models.IntegerField(default=0)
-
-    instructions = models.TextField(blank=True)
-    additional_notes = models.TextField(blank=True)
-
-    # -------------------------------------------------
-    # Dates
-    # -------------------------------------------------
-    prescribed_date = models.DateTimeField(auto_now_add=True)
-    start_date = models.DateField(null=True, blank=True)
-    expiry_date = models.DateField(null=True, blank=True)
-    last_filled_date = models.DateTimeField(null=True, blank=True)
-
-    # -------------------------------------------------
-    # Status
-    # -------------------------------------------------
-    status = models.CharField(
-        max_length=20, choices=STATUS_CHOICES,
-        default='active', db_index=True
-    )
-
-    # -------------------------------------------------
-    # Pharmacy (optional)
-    # -------------------------------------------------
-    pharmacy_name = models.CharField(max_length=255, blank=True)
-    pharmacy_phone = models.CharField(max_length=20, blank=True)
-    pharmacy_address = models.TextField(blank=True)
-
-    # -------------------------------------------------
-    # Auto-numbering & expiry
-    # -------------------------------------------------
-    def save(self, *args, **kwargs):
-        if not self.prescription_number:
-            year = timezone.now().year
-            count = Prescription.objects.filter(
-                created_at__year=year
-            ).count() + 1
-            self.prescription_number = f"RX-{year}-{str(count).zfill(4)}"
-
-        if not self.expiry_date and self.duration_value and self.duration_unit:
-            today = timezone.now().date()
-            if self.duration_unit == 'days':
-                self.expiry_date = today + timedelta(days=self.duration_value)
-            elif self.duration_unit == 'weeks':
-                self.expiry_date = today + timedelta(weeks=self.duration_value)
-            elif self.duration_unit == 'months':
-                self.expiry_date = today + timedelta(days=self.duration_value * 30)
-
-        super().save(*args, **kwargs)
-
-    # -------------------------------------------------
-    # Status helpers
-    # -------------------------------------------------
-    def suspend(self):
-        self.status = 'suspended'
-        self.save()
-
-    def resume(self):
-        self.status = 'active'
-        self.save()
-
-    def cancel(self):
-        self.status = 'cancelled'
-        self.save()
-
-    def complete(self):
-        self.status = 'completed'
-        self.save()
-
-    def can_refill(self):
-        if self.status != 'active':
-            return False
-        if self.refills_used >= self.refills:
-            return False
-        if self.expiry_date and self.expiry_date < timezone.now().date():
-            return False
-        return True
-
-    def use_refill(self):
-        if self.can_refill():
-            self.refills_used += 1
-            self.last_filled_date = timezone.now()
-            self.save()
-            return True
-        return False
-
-    # -------------------------------------------------
-    # Properties
-    # -------------------------------------------------
-    @property
-    def is_active(self):
-        return self.status == 'active'
-
-    @property
-    def duration_display(self):
-        return f"{self.duration_value} {self.get_duration_unit_display()}"
-
-    @property
-    def frequency_display(self):
-        if self.frequency == 'other':
-            return self.frequency_custom
-        return self.get_frequency_display()
-
-    def __str__(self):
-        patient_name = self.patient_profile.profile.user.get_full_name()
-        return f"{self.prescription_number} - {self.medication_name} - {patient_name}"
-
-    class Meta:
-        ordering = ['-prescribed_date']
-        indexes = [
-            models.Index(fields=['prescription_number']),
-            models.Index(fields=['patient_profile', 'status']),
-            models.Index(fields=['doctor_profile', 'status']),
-            models.Index(fields=['prescribed_date']),
-        ]
-
-# ============================================
-# PRESCRIPTION REFILL REQUEST
-# ============================================
-class RefillRequest(BaseModel):
-    """Patient requests for prescription refills"""
-    
-    STATUS_CHOICES = (
-        ('pending', 'Pending'),
-        ('approved', 'Approved'),
-        ('rejected', 'Rejected'),
-        ('cancelled', 'Cancelled'),
-    )
-    
-    prescription = models.ForeignKey(
-        Prescription,
+    # ── Relationships ─────────────────────────────────
+    consultation = models.ForeignKey(
+        Consultation,
         on_delete=models.CASCADE,
-        related_name='refill_requests',
-        help_text="The prescription being refilled"
+        related_name='prescriptions',
+        null=True, blank=True,
     )
     patient_profile = models.ForeignKey(
         PatientProfile,
         on_delete=models.CASCADE,
-        related_name='refill_requests',
-        help_text="The patient requesting the refill"
+        related_name='prescriptions',
     )
-    
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default='pending',
-        help_text="Status of the request"
-    )
-    reason = models.TextField(
-        blank=True,
-        help_text="Reason for refill request"
-    )
-    notes = models.TextField(
-        blank=True,
-        help_text="Additional notes"
-    )
-    
-    requested_date = models.DateTimeField(auto_now_add=True)
-    reviewed_date = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Date the request was reviewed"
-    )
-    reviewed_by = models.ForeignKey(
+    doctor_profile = models.ForeignKey(
         DoctorProfile,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='reviewed_refills',
-        help_text="Doctor who reviewed the request"
+        on_delete=models.CASCADE,
+        related_name='prescriptions',
     )
-    review_notes = models.TextField(
-        blank=True,
-        help_text="Review notes"
+
+    # ── The item itself ───────────────────────────────
+    name = models.CharField(
+        max_length=255,
+        help_text="Free text — 'Tab Atrotec 20mg', 'IV Buthamesol 2mb', 'Surgical knife 1x'",
     )
-    
+    instructions = models.TextField(
+        blank=True,
+        help_text="e.g. 'Once daily • 30 Days • 23 tablets'",
+    )
+    quantity = models.PositiveIntegerField(default=1)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
     def __str__(self):
-        patient_name = self.patient_profile.profile.user.get_full_name()
-        return f"Refill request for {self.prescription.prescription_number} - {patient_name}"
-    
-    def approve(self, doctor):
-        """Approve the refill request"""
-        self.status = 'approved'
-        self.reviewed_by = doctor
-        self.reviewed_date = timezone.now()
-        self.save()
-        # Use a refill
-        self.prescription.use_refill()
-    
-    def reject(self, doctor, reason=''):
-        """Reject the refill request"""
-        self.status = 'rejected'
-        self.reviewed_by = doctor
-        self.reviewed_date = timezone.now()
-        self.review_notes = reason
-        self.save()
-    
+        return f"{self.name} ({self.patient_profile.profile.user.get_full_name()})"
+
     class Meta:
-        ordering = ['-requested_date']
+        ordering = ['created_at']
         indexes = [
-            models.Index(fields=['prescription', 'status']),
-            models.Index(fields=['patient_profile', 'status']),
+            models.Index(fields=['consultation']),
+            models.Index(fields=['patient_profile']),
         ]
+# ============================================
+# PRESCRIPTION
+# ============================================
+# # apps/prescriptions/models.py
+# from django.db import models
+# from django.core.validators import MinValueValidator, MaxValueValidator
+# from django.utils import timezone
+# from datetime import timedelta
+# from accounts.models import BaseModel, DoctorProfile, PatientProfile
+
+
+# class Prescription(BaseModel):
+#     """Medication prescription issued by a doctor"""
+
+#     STATUS_CHOICES = (
+#         ('active', 'Active'),
+#         ('suspended', 'Suspended'),
+#         ('completed', 'Completed'),
+#         ('cancelled', 'Cancelled'),
+#         ('expired', 'Expired'),
+#     )
+
+#     FREQUENCY_CHOICES = (
+#         ('once_daily', 'Once daily'),
+#         ('twice_daily', 'Twice daily'),
+#         ('three_times_daily', 'Three times daily'),
+#         ('four_times_daily', 'Four times daily'),
+#         ('every_6_hours', 'Every 6 hours'),
+#         ('every_8_hours', 'Every 8 hours'),
+#         ('every_12_hours', 'Every 12 hours'),
+#         ('once_weekly', 'Once weekly'),
+#         ('twice_weekly', 'Twice weekly'),
+#         ('as_needed', 'As needed'),
+#         ('other', 'Other'),
+#     )
+
+#     DURATION_UNIT_CHOICES = (
+#         ('days', 'Days'),
+#         ('weeks', 'Weeks'),
+#         ('months', 'Months'),
+#         ('indefinite', 'Indefinite'),
+#     )
+
+#     # -------------------------------------------------
+#     # Relationships
+#     # -------------------------------------------------
+#     prescription_number = models.CharField(
+#         max_length=50, unique=True, db_index=True,
+#         help_text="Auto-generated (e.g., RX-2026-0001)"
+#     )
+#     patient_profile = models.ForeignKey(
+#         PatientProfile, on_delete=models.CASCADE,
+#         related_name='prescriptions'
+#     )
+#     doctor_profile = models.ForeignKey(
+#         DoctorProfile, on_delete=models.CASCADE,
+#         related_name='prescriptions'
+#     )
+
+#     # -------------------------------------------------
+#     # Medication (frontend sends only the name)
+#     # -------------------------------------------------
+#     medication_name = models.CharField(
+#         max_length=255,
+#         help_text="Name of the medication"
+#     )
+
+#     # -------------------------------------------------
+#     # Dosage & instructions
+#     # -------------------------------------------------
+#     dosage = models.CharField(max_length=50)
+#     frequency = models.CharField(
+#         max_length=50, choices=FREQUENCY_CHOICES, default='once_daily'
+#     )
+#     frequency_custom = models.CharField(max_length=100, blank=True)
+
+#     duration_value = models.IntegerField(default=30)
+#     duration_unit = models.CharField(
+#         max_length=20, choices=DURATION_UNIT_CHOICES, default='days'
+#     )
+
+#     quantity = models.IntegerField(validators=[MinValueValidator(1)])
+#     refills = models.IntegerField(
+#         default=0,
+#         validators=[MinValueValidator(0), MaxValueValidator(12)]
+#     )
+#     refills_used = models.IntegerField(default=0)
+
+#     instructions = models.TextField(blank=True)
+#     additional_notes = models.TextField(blank=True)
+
+#     # -------------------------------------------------
+#     # Dates
+#     # -------------------------------------------------
+#     prescribed_date = models.DateTimeField(auto_now_add=True)
+#     start_date = models.DateField(null=True, blank=True)
+#     expiry_date = models.DateField(null=True, blank=True)
+#     last_filled_date = models.DateTimeField(null=True, blank=True)
+
+#     # -------------------------------------------------
+#     # Status
+#     # -------------------------------------------------
+#     status = models.CharField(
+#         max_length=20, choices=STATUS_CHOICES,
+#         default='active', db_index=True
+#     )
+
+#     # -------------------------------------------------
+#     # Pharmacy (optional)
+#     # -------------------------------------------------
+#     pharmacy_name = models.CharField(max_length=255, blank=True)
+#     pharmacy_phone = models.CharField(max_length=20, blank=True)
+#     pharmacy_address = models.TextField(blank=True)
+
+#     # -------------------------------------------------
+#     # Auto-numbering & expiry
+#     # -------------------------------------------------
+#     def save(self, *args, **kwargs):
+#         if not self.prescription_number:
+#             year = timezone.now().year
+#             count = Prescription.objects.filter(
+#                 created_at__year=year
+#             ).count() + 1
+#             self.prescription_number = f"RX-{year}-{str(count).zfill(4)}"
+
+#         if not self.expiry_date and self.duration_value and self.duration_unit:
+#             today = timezone.now().date()
+#             if self.duration_unit == 'days':
+#                 self.expiry_date = today + timedelta(days=self.duration_value)
+#             elif self.duration_unit == 'weeks':
+#                 self.expiry_date = today + timedelta(weeks=self.duration_value)
+#             elif self.duration_unit == 'months':
+#                 self.expiry_date = today + timedelta(days=self.duration_value * 30)
+
+#         super().save(*args, **kwargs)
+
+#     # -------------------------------------------------
+#     # Status helpers
+#     # -------------------------------------------------
+#     def suspend(self):
+#         self.status = 'suspended'
+#         self.save()
+
+#     def resume(self):
+#         self.status = 'active'
+#         self.save()
+
+#     def cancel(self):
+#         self.status = 'cancelled'
+#         self.save()
+
+#     def complete(self):
+#         self.status = 'completed'
+#         self.save()
+
+#     def can_refill(self):
+#         if self.status != 'active':
+#             return False
+#         if self.refills_used >= self.refills:
+#             return False
+#         if self.expiry_date and self.expiry_date < timezone.now().date():
+#             return False
+#         return True
+
+#     def use_refill(self):
+#         if self.can_refill():
+#             self.refills_used += 1
+#             self.last_filled_date = timezone.now()
+#             self.save()
+#             return True
+#         return False
+
+#     # -------------------------------------------------
+#     # Properties
+#     # -------------------------------------------------
+#     @property
+#     def is_active(self):
+#         return self.status == 'active'
+
+#     @property
+#     def duration_display(self):
+#         return f"{self.duration_value} {self.get_duration_unit_display()}"
+
+#     @property
+#     def frequency_display(self):
+#         if self.frequency == 'other':
+#             return self.frequency_custom
+#         return self.get_frequency_display()
+
+#     def __str__(self):
+#         patient_name = self.patient_profile.profile.user.get_full_name()
+#         return f"{self.prescription_number} - {self.medication_name} - {patient_name}"
+
+#     class Meta:
+#         ordering = ['-prescribed_date']
+#         indexes = [
+#             models.Index(fields=['prescription_number']),
+#             models.Index(fields=['patient_profile', 'status']),
+#             models.Index(fields=['doctor_profile', 'status']),
+#             models.Index(fields=['prescribed_date']),
+#         ]
+
+# # ============================================
+# # PRESCRIPTION REFILL REQUEST
+# # ============================================
+# class RefillRequest(BaseModel):
+#     """Patient requests for prescription refills"""
+    
+#     STATUS_CHOICES = (
+#         ('pending', 'Pending'),
+#         ('approved', 'Approved'),
+#         ('rejected', 'Rejected'),
+#         ('cancelled', 'Cancelled'),
+#     )
+    
+#     prescription = models.ForeignKey(
+#         Prescription,
+#         on_delete=models.CASCADE,
+#         related_name='refill_requests',
+#         help_text="The prescription being refilled"
+#     )
+#     patient_profile = models.ForeignKey(
+#         PatientProfile,
+#         on_delete=models.CASCADE,
+#         related_name='refill_requests',
+#         help_text="The patient requesting the refill"
+#     )
+    
+#     status = models.CharField(
+#         max_length=20,
+#         choices=STATUS_CHOICES,
+#         default='pending',
+#         help_text="Status of the request"
+#     )
+#     reason = models.TextField(
+#         blank=True,
+#         help_text="Reason for refill request"
+#     )
+#     notes = models.TextField(
+#         blank=True,
+#         help_text="Additional notes"
+#     )
+    
+#     requested_date = models.DateTimeField(auto_now_add=True)
+#     reviewed_date = models.DateTimeField(
+#         null=True,
+#         blank=True,
+#         help_text="Date the request was reviewed"
+#     )
+#     reviewed_by = models.ForeignKey(
+#         DoctorProfile,
+#         on_delete=models.SET_NULL,
+#         null=True,
+#         blank=True,
+#         related_name='reviewed_refills',
+#         help_text="Doctor who reviewed the request"
+#     )
+#     review_notes = models.TextField(
+#         blank=True,
+#         help_text="Review notes"
+#     )
+    
+#     def __str__(self):
+#         patient_name = self.patient_profile.profile.user.get_full_name()
+#         return f"Refill request for {self.prescription.prescription_number} - {patient_name}"
+    
+#     def approve(self, doctor):
+#         """Approve the refill request"""
+#         self.status = 'approved'
+#         self.reviewed_by = doctor
+#         self.reviewed_date = timezone.now()
+#         self.save()
+#         # Use a refill
+#         self.prescription.use_refill()
+    
+#     def reject(self, doctor, reason=''):
+#         """Reject the refill request"""
+#         self.status = 'rejected'
+#         self.reviewed_by = doctor
+#         self.reviewed_date = timezone.now()
+#         self.review_notes = reason
+#         self.save()
+    
+#     class Meta:
+#         ordering = ['-requested_date']
+#         indexes = [
+#             models.Index(fields=['prescription', 'status']),
+#             models.Index(fields=['patient_profile', 'status']),
+#         ]
 
 
 # ============================================

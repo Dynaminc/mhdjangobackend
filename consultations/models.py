@@ -38,7 +38,9 @@ class Consultation(BaseModel):
     )
     doctor_profile = models.ForeignKey(
         DoctorProfile, 
-        on_delete=models.CASCADE, 
+        on_delete=models.SET_NULL,      # was CASCADE
+        null=True,                       # ✅ allow null
+        blank=True,     
         related_name='consultations',
         help_text="The doctor conducting the consultation"
     )
@@ -61,6 +63,12 @@ class Consultation(BaseModel):
         blank=True, 
         help_text="Vital signs recorded during consultation"
     )
+    
+    examinations = models.TextField(
+        blank=True,
+        help_text="Physical examination findings"
+    )
+        
     assessment = models.TextField(
         blank=True, 
         help_text="Clinical assessment/diagnosis"
@@ -102,8 +110,10 @@ class Consultation(BaseModel):
     
     def __str__(self):
         patient_name = self.patient_profile.profile.user.get_full_name()
-        doctor_name = self.doctor_profile.profile.user.get_full_name()
-        return f"Consultation #{self.id} - {patient_name} with Dr. {doctor_name}"
+        if self.doctor_profile_id:
+            doctor_name = self.doctor_profile.profile.user.get_full_name()
+            return f"Consultation #{self.id} - {patient_name} with Dr. {doctor_name}"
+        return f"Consultation #{self.id} - {patient_name} (doctor unassigned)"
     
     @property
     def patient(self):
@@ -131,15 +141,20 @@ class Consultation(BaseModel):
     def is_completed(self):
         return self.status == 'completed'
     
+    @property
+    def is_doctor_assigned(self):
+        return self.doctor_profile_id is not None
+    
     def complete(self):
-        """Mark consultation as completed"""
         from django.utils import timezone
         self.status = 'completed'
         self.save()
-        # Trigger medical record update
-        # from .signals import update_medical_record_on_consultation
         update_medical_record_on_consultation(self)
-    
+        # Close the linked appointment too
+        if getattr(self, 'appointment', None):
+            self.appointment.status = 'completed'
+            self.appointment.save(update_fields=['status'])
+                
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -179,7 +194,7 @@ class Examination(BaseModel):
     consultation = models.ForeignKey(
         Consultation,
         on_delete=models.CASCADE,
-        related_name='examinations',
+        related_name='examination_records',
         help_text="The consultation this examination belongs to"
     )
     
@@ -521,6 +536,7 @@ def update_medical_record_on_consultation(sender, instance, created, **kwargs):
     """
     When a consultation is completed, update the patient's medical record.
     """
+    return
     if instance.status == 'completed':
         # Get or create the medical record
         medical_record, _ = MedicalRecord.objects.get_or_create(

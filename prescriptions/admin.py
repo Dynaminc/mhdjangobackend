@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
-    MedicationCatalog, Prescription, RefillRequest,
+    MedicationCatalog, Prescription, 
     MedicationInteraction, MedicationSchedule, MedicationAdherence
 )
 
@@ -62,229 +62,134 @@ from django.utils import timezone
 from .models import Prescription
 
 
+# apps/prescriptions/admin.py
+from django.contrib import admin
+from .models import Prescription
+
+
 @admin.register(Prescription)
 class PrescriptionAdmin(admin.ModelAdmin):
-    """Admin for the simplified Prescription model"""
-
-    # -------------------------------------------------
-    # List view
-    # -------------------------------------------------
-    list_display = [
-        'prescription_number',
-        'patient_name',
-        'doctor_name',
-        'medication_name',
-        'dosage',
-        'frequency',
-        'status',
-        'prescribed_date',
-        'expiry_date',
-    ]
-
-    list_filter = [
-        'status',
-        'frequency',
-        'duration_unit',
-        'prescribed_date',
-    ]
-
-    search_fields = [
-        'prescription_number',
-        'medication_name',
-        'dosage',
+    list_display = (
+        'id',
+        'name',
+        'get_patient',
+        'get_doctor',
+        'consultation',
+        'quantity',
+        'created_at',
+    )
+    list_filter = ('created_at',)
+    search_fields = (
+        'name',
+        'instructions',
         'patient_profile__profile__user__first_name',
         'patient_profile__profile__user__last_name',
         'patient_profile__profile__user__email',
         'patient_profile__profile__mh_user_id',
         'doctor_profile__profile__user__first_name',
         'doctor_profile__profile__user__last_name',
-    ]
-
-    readonly_fields = [
-        'prescription_number',
-        'refills_used',
-        'prescribed_date',
-        'expiry_date',
-        'last_filled_date',
-        'created_at',
-        'updated_at',
-    ]
-
-    ordering = ['-prescribed_date']
-    date_hierarchy = 'prescribed_date'
+    )
+    raw_id_fields = ('patient_profile', 'doctor_profile', 'consultation')
+    readonly_fields = ('id', 'created_at')
+    date_hierarchy = 'created_at'
+    ordering = ('-created_at',)
     list_per_page = 25
 
-    # -------------------------------------------------
-    # Detail form layout
-    # -------------------------------------------------
     fieldsets = (
-        ('Identifiers', {
-            'fields': (
-                'prescription_number',
-                'patient_profile',
-                'doctor_profile',
-            )
+        ('Relationships', {
+            'fields': ('id', 'patient_profile', 'doctor_profile', 'consultation')
         }),
-        ('Medication', {
-            'fields': (
-                'medication_name',
-                'dosage',
-                'frequency',
-                'frequency_custom',
-            )
-        }),
-        ('Duration & Quantity', {
-            'fields': (
-                'duration_value',
-                'duration_unit',
-                'quantity',
-                'refills',
-                'refills_used',
-            )
-        }),
-        ('Instructions', {
-            'fields': (
-                'instructions',
-                'additional_notes',
-            )
-        }),
-        ('Dates', {
-            'fields': (
-                'prescribed_date',
-                'start_date',
-                'expiry_date',
-                'last_filled_date',
-            )
-        }),
-        ('Status', {
-            'fields': ('status',)
-        }),
-        ('Pharmacy', {
-            'fields': (
-                'pharmacy_name',
-                'pharmacy_phone',
-                'pharmacy_address',
-            ),
-            'classes': ('collapse',)
-        }),
-        ('Metadata', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-
-    # -------------------------------------------------
-    # Custom columns
-    # -------------------------------------------------
-    @admin.display(description='Patient', ordering='patient_profile__profile__user__first_name')
-    def patient_name(self, obj):
-        try:
-            return obj.patient_profile.profile.user.get_full_name()
-        except Exception:
-            return '-'
-
-    @admin.display(description='Doctor', ordering='doctor_profile__profile__user__first_name')
-    def doctor_name(self, obj):
-        try:
-            return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
-        except Exception:
-            return '-'
-
-    # -------------------------------------------------
-    # Bulk actions
-    # -------------------------------------------------
-    actions = ['mark_active', 'mark_completed', 'mark_cancelled', 'mark_expired']
-
-    @admin.action(description='Mark selected prescriptions as Active')
-    def mark_active(self, request, queryset):
-        updated = queryset.update(status='active')
-        self.message_user(request, f'{updated} prescriptions marked as Active.')
-
-    @admin.action(description='Mark selected prescriptions as Completed')
-    def mark_completed(self, request, queryset):
-        updated = queryset.update(status='completed')
-        self.message_user(request, f'{updated} prescriptions marked as Completed.')
-
-    @admin.action(description='Mark selected prescriptions as Cancelled')
-    def mark_cancelled(self, request, queryset):
-        updated = queryset.update(status='cancelled')
-        self.message_user(request, f'{updated} prescriptions marked as Cancelled.')
-
-    @admin.action(description='Mark selected prescriptions as Expired')
-    def mark_expired(self, request, queryset):
-        updated = queryset.update(status='expired')
-        self.message_user(request, f'{updated} prescriptions marked as Expired.')
-
-    # -------------------------------------------------
-    # Permissions — only doctors/staff can add or change
-    # -------------------------------------------------
-    def has_add_permission(self, request):
-        return request.user.is_staff
-
-    def has_change_permission(self, request, obj=None):
-        return request.user.is_staff
-
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-    
-# ============================================
-# RefillRequest Admin
-# ============================================
-@admin.register(RefillRequest)
-class RefillRequestAdmin(admin.ModelAdmin):
-    list_display = (
-        'get_patient',
-        'prescription',
-        'status',
-        'requested_date',
-        'reviewed_date'
-    )
-    list_filter = ('status', 'requested_date')
-    search_fields = (
-        'patient_profile__profile__user__username',
-        'patient_profile__profile__user__email',
-        'prescription__prescription_number'
-    )
-    raw_id_fields = ('patient_profile', 'prescription', 'reviewed_by')
-    readonly_fields = ('requested_date', 'created_at', 'updated_at')
-    ordering = ('-requested_date',)
-    
-    fieldsets = (
-        ('Request Details', {
-            'fields': ('prescription', 'patient_profile', 'status', 'reason', 'notes')
-        }),
-        ('Review', {
-            'fields': ('reviewed_by', 'reviewed_date', 'review_notes')
+        ('Item', {
+            'fields': ('name', 'instructions', 'quantity')
         }),
         ('Timestamps', {
-            'fields': ('requested_date', 'created_at', 'updated_at'),
+            'fields': ('created_at',),
             'classes': ('collapse',)
         }),
     )
-    
+
+    @admin.display(description='Patient',
+                   ordering='patient_profile__profile__user__first_name')
     def get_patient(self, obj):
-        return obj.patient_profile.profile.user.get_full_name()
-    get_patient.short_description = 'Patient'
+        if not obj.patient_profile_id:
+            return '—'
+        user = obj.patient_profile.profile.user
+        return user.get_full_name() or user.email
+
+    @admin.display(description='Doctor',
+                   ordering='doctor_profile__profile__user__first_name')
+    def get_doctor(self, obj):
+        if not obj.doctor_profile_id:
+            return '—'
+        user = obj.doctor_profile.profile.user
+        return f"Dr. {user.get_full_name() or user.email}"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'patient_profile__profile__user',
+            'doctor_profile__profile__user',
+            'consultation',
+        )
+        
+        
+# ============================================
+# RefillRequest Admin
+# # ============================================
+# @admin.register(RefillRequest)
+# class RefillRequestAdmin(admin.ModelAdmin):
+#     list_display = (
+#         'get_patient',
+#         'prescription',
+#         'status',
+#         'requested_date',
+#         'reviewed_date'
+#     )
+#     list_filter = ('status', 'requested_date')
+#     search_fields = (
+#         'patient_profile__profile__user__username',
+#         'patient_profile__profile__user__email',
+#         'prescription__prescription_number'
+#     )
+#     raw_id_fields = ('patient_profile', 'prescription', 'reviewed_by')
+#     readonly_fields = ('requested_date', 'created_at', 'updated_at')
+#     ordering = ('-requested_date',)
     
-    actions = ['approve_requests', 'reject_requests']
+#     fieldsets = (
+#         ('Request Details', {
+#             'fields': ('prescription', 'patient_profile', 'status', 'reason', 'notes')
+#         }),
+#         ('Review', {
+#             'fields': ('reviewed_by', 'reviewed_date', 'review_notes')
+#         }),
+#         ('Timestamps', {
+#             'fields': ('requested_date', 'created_at', 'updated_at'),
+#             'classes': ('collapse',)
+#         }),
+#     )
     
-    def approve_requests(self, request, queryset):
-        updated = 0
-        for refill in queryset:
-            if refill.status == 'pending':
-                refill.approve(request.user.profile.doctor_profile)
-                updated += 1
-        self.message_user(request, f'{updated} refill requests approved.')
-    approve_requests.short_description = 'Approve selected refill requests'
+#     def get_patient(self, obj):
+#         return obj.patient_profile.profile.user.get_full_name()
+#     get_patient.short_description = 'Patient'
     
-    def reject_requests(self, request, queryset):
-        updated = 0
-        for refill in queryset:
-            if refill.status == 'pending':
-                refill.reject(request.user.profile.doctor_profile)
-                updated += 1
-        self.message_user(request, f'{updated} refill requests rejected.')
-    reject_requests.short_description = 'Reject selected refill requests'
+#     actions = ['approve_requests', 'reject_requests']
+    
+#     def approve_requests(self, request, queryset):
+#         updated = 0
+#         for refill in queryset:
+#             if refill.status == 'pending':
+#                 refill.approve(request.user.profile.doctor_profile)
+#                 updated += 1
+#         self.message_user(request, f'{updated} refill requests approved.')
+#     approve_requests.short_description = 'Approve selected refill requests'
+    
+#     def reject_requests(self, request, queryset):
+#         updated = 0
+#         for refill in queryset:
+#             if refill.status == 'pending':
+#                 refill.reject(request.user.profile.doctor_profile)
+#                 updated += 1
+#         self.message_user(request, f'{updated} refill requests rejected.')
+#     reject_requests.short_description = 'Reject selected refill requests'
 
 
 # ============================================

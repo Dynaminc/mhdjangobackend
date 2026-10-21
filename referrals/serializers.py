@@ -96,7 +96,23 @@ class SpecialistReviewSerializer(serializers.ModelSerializer):
 # =====================================================
 # SPECIALIST — LIST (lightweight, for directory cards)
 # =====================================================
+
+# apps/specialists/serializers.py
+# apps/specialists/serializers.py
+from rest_framework import serializers
+from .models import Specialist
+
+
 class SpecialistListSerializer(serializers.ModelSerializer):
+    # ── Resolution from linked Profile ────────────────────
+    doctor_profile_id = serializers.SerializerMethodField()
+    doctor_name = serializers.SerializerMethodField()
+    mh_user_id = serializers.CharField(source='user.mh_user_id', read_only=True)
+    user_id = serializers.IntegerField(source='user.user.id', read_only=True)
+    email = serializers.EmailField(source='user.user.email', read_only=True)
+    role = serializers.CharField(source='user.role', read_only=True)
+
+    # ── Computed fields from the model ────────────────────
     full_name = serializers.CharField(read_only=True)
     display_name = serializers.CharField(read_only=True)
     avatar_display = serializers.CharField(read_only=True)
@@ -113,6 +129,12 @@ class SpecialistListSerializer(serializers.ModelSerializer):
         model = Specialist
         fields = [
             'id', 'slug',
+
+            # ✅ For appointment creation + queue scoping
+            'doctor_profile_id', 'doctor_name',
+            'mh_user_id', 'user_id', 'email', 'role',
+
+            # Core profile
             'title', 'first_name', 'last_name', 'middle_name',
             'full_name', 'display_name', 'initials',
             'credentials', 'specialty', 'specialty_display',
@@ -130,7 +152,17 @@ class SpecialistListSerializer(serializers.ModelSerializer):
             'is_verified', 'is_featured',
         ]
 
+    def get_doctor_profile_id(self, obj):
+        if not obj.user:
+            return None
+        doctor = getattr(obj.user, 'doctor_profile', None)
+        return doctor.id if doctor else None
 
+    def get_doctor_name(self, obj):
+        if not obj.user or not obj.user.user:
+            return None
+        return obj.user.user.get_full_name() or obj.user.user.email
+    
 # =====================================================
 # SPECIALIST — DETAIL (full profile page)
 # =====================================================

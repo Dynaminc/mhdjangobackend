@@ -4,7 +4,7 @@ from django.utils import timezone
 from .models import (
     MedicationCatalog,
     Prescription,
-    RefillRequest,
+    # RefillRequest,
     MedicationInteraction,
     MedicationSchedule,
     MedicationAdherence
@@ -22,105 +22,180 @@ from rest_framework import serializers
 from .models import Prescription
 from accounts.models import Profile, PatientProfile
 
+# apps/prescriptions/serializers.py
+from rest_framework import serializers
+
+from .models import Prescription
+from accounts.models import Profile, PatientProfile
+from consultations.models import Consultation
+
 
 class PrescriptionSerializer(serializers.ModelSerializer):
-    """Read serializer for Prescription"""
-    patient_name = serializers.SerializerMethodField()
+    mh_user_id = serializers.CharField(source='patient_profile.profile.mh_user_id', read_only=True)
+    patient_name = serializers.CharField(source='patient_profile.profile.user.get_full_name', read_only=True)
     doctor_name = serializers.SerializerMethodField()
-    mh_user_id = serializers.SerializerMethodField()
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    frequency_display = serializers.CharField(read_only=True)
-    duration_display = serializers.CharField(read_only=True)
-    is_active = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Prescription
         fields = [
-            'id', 'prescription_number',
-            'mh_user_id', 'patient_name', 'doctor_name',
-            'medication_name', 'dosage',
-            'frequency', 'frequency_display', 'frequency_custom',
-            'duration_value', 'duration_unit', 'duration_display',
-            'quantity', 'refills', 'refills_used',
-            'instructions', 'additional_notes',
-            'prescribed_date', 'start_date', 'expiry_date', 'last_filled_date',
-            'status', 'status_display', 'is_active',
-            'pharmacy_name', 'pharmacy_phone', 'pharmacy_address',
-            'created_at', 'updated_at',
+            'id', 'consultation', 'mh_user_id', 'patient_name', 'doctor_name',
+            'name', 'instructions', 'quantity', 'created_at',
         ]
-
-    def get_patient_name(self, obj):
-        return obj.patient_profile.profile.user.get_full_name()
 
     def get_doctor_name(self, obj):
         return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
 
-    def get_mh_user_id(self, obj):
-        return obj.patient_profile.profile.mh_user_id
-
 
 class PrescriptionCreateSerializer(serializers.Serializer):
-    """Write serializer — accepts `mh_user_id` and auto-resolves the rest"""
+    """Create one item using mh_user_id + optional consultation_id."""
     mh_user_id = serializers.CharField(required=True)
+    consultation_id = serializers.IntegerField(required=False, allow_null=True)
 
-    medication_name = serializers.CharField()
-    dosage = serializers.CharField()
-    frequency = serializers.ChoiceField(choices=Prescription.FREQUENCY_CHOICES)
-    frequency_custom = serializers.CharField(required=False, allow_blank=True)
-
-    duration_value = serializers.IntegerField(required=False, default=30)
-    duration_unit = serializers.ChoiceField(
-        choices=Prescription.DURATION_UNIT_CHOICES,
-        required=False, default='days'
-    )
-
-    quantity = serializers.IntegerField()
-    refills = serializers.IntegerField(required=False, default=0)
-
+    name = serializers.CharField()
     instructions = serializers.CharField(required=False, allow_blank=True)
-    additional_notes = serializers.CharField(required=False, allow_blank=True)
-    start_date = serializers.DateField(required=False, allow_null=True)
-
-    pharmacy_name = serializers.CharField(required=False, allow_blank=True)
-    pharmacy_phone = serializers.CharField(required=False, allow_blank=True)
-    pharmacy_address = serializers.CharField(required=False, allow_blank=True)
+    quantity = serializers.IntegerField(required=False, default=1, min_value=1)
 
     def create(self, validated_data):
         request = self.context['request']
         mh_user_id = validated_data.pop('mh_user_id')
+        consultation_id = validated_data.pop('consultation_id', None)
 
-        # 1. Resolve Profile → PatientProfile (auto-create if missing)
+        # 1. patient
         try:
             profile = Profile.objects.get(mh_user_id=mh_user_id)
         except Profile.DoesNotExist:
             raise serializers.ValidationError(
                 {"mh_user_id": f"Profile '{mh_user_id}' not found"}
             )
-
         patient_profile = getattr(profile, 'patient_profile', None)
         if patient_profile is None:
             patient_profile = PatientProfile.objects.create(profile=profile)
 
-        # 2. Resolve doctor from request.user
+        # 2. doctor
         doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
-        
-        if request.user.profile.role != 'doctor':
-            raise serializers.ValidationError(
-                {"detail": "User not doctor"}
-            )
         if not doctor_profile:
-            doctor_profile = DoctorProfile.objects.create(profile=request.user.profile)
-            # raise serializers.ValidationError(
-            #     {"detail": "Only doctors can create prescriptions."}
-            # )
+            raise serializers.ValidationError(
+                {"detail": "Only doctors can create prescriptions."}
+            )
 
-        # 3. Create the prescription
+        # 3. consultation (optional, must belong to patient)
+        consultation = None
+        if consultation_id:
+            try:
+                consultation = Consultation.objects.get(id=consultation_id)
+            except Consultation.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"consultation_id": f"Consultation {consultation_id} not found"}
+                )
+            if consultation.patient_profile_id != patient_profile.id:
+                raise serializers.ValidationError(
+                    {"consultation_id": "Consultation does not belong to this patient"}
+                )
+
         return Prescription.objects.create(
+            consultation=consultation,
             patient_profile=patient_profile,
             doctor_profile=doctor_profile,
-            status='active',
             **validated_data,
         )
+# class PrescriptionSerializer(serializers.ModelSerializer):
+#     """Read serializer for Prescription"""
+#     patient_name = serializers.SerializerMethodField()
+#     doctor_name = serializers.SerializerMethodField()
+#     mh_user_id = serializers.SerializerMethodField()
+#     status_display = serializers.CharField(source='get_status_display', read_only=True)
+#     frequency_display = serializers.CharField(read_only=True)
+#     duration_display = serializers.CharField(read_only=True)
+#     is_active = serializers.BooleanField(read_only=True)
+
+#     class Meta:
+#         model = Prescription
+#         fields = [
+#             'id', 'prescription_number',
+#             'mh_user_id', 'patient_name', 'doctor_name',
+#             'medication_name', 'dosage',
+#             'frequency', 'frequency_display', 'frequency_custom',
+#             'duration_value', 'duration_unit', 'duration_display',
+#             'quantity', 'refills', 'refills_used',
+#             'instructions', 'additional_notes',
+#             'prescribed_date', 'start_date', 'expiry_date', 'last_filled_date',
+#             'status', 'status_display', 'is_active',
+#             'pharmacy_name', 'pharmacy_phone', 'pharmacy_address',
+#             'created_at', 'updated_at',
+#         ]
+
+#     def get_patient_name(self, obj):
+#         return obj.patient_profile.profile.user.get_full_name()
+
+#     def get_doctor_name(self, obj):
+#         return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
+
+#     def get_mh_user_id(self, obj):
+#         return obj.patient_profile.profile.mh_user_id
+
+
+# class PrescriptionCreateSerializer(serializers.Serializer):
+#     """Write serializer — accepts `mh_user_id` and auto-resolves the rest"""
+#     mh_user_id = serializers.CharField(required=True)
+
+#     medication_name = serializers.CharField()
+#     dosage = serializers.CharField()
+#     frequency = serializers.ChoiceField(choices=Prescription.FREQUENCY_CHOICES)
+#     frequency_custom = serializers.CharField(required=False, allow_blank=True)
+
+#     duration_value = serializers.IntegerField(required=False, default=30)
+#     duration_unit = serializers.ChoiceField(
+#         choices=Prescription.DURATION_UNIT_CHOICES,
+#         required=False, default='days'
+#     )
+
+#     quantity = serializers.IntegerField()
+#     refills = serializers.IntegerField(required=False, default=0)
+
+#     instructions = serializers.CharField(required=False, allow_blank=True)
+#     additional_notes = serializers.CharField(required=False, allow_blank=True)
+#     start_date = serializers.DateField(required=False, allow_null=True)
+
+#     pharmacy_name = serializers.CharField(required=False, allow_blank=True)
+#     pharmacy_phone = serializers.CharField(required=False, allow_blank=True)
+#     pharmacy_address = serializers.CharField(required=False, allow_blank=True)
+
+#     def create(self, validated_data):
+#         request = self.context['request']
+#         mh_user_id = validated_data.pop('mh_user_id')
+
+#         # 1. Resolve Profile → PatientProfile (auto-create if missing)
+#         try:
+#             profile = Profile.objects.get(mh_user_id=mh_user_id)
+#         except Profile.DoesNotExist:
+#             raise serializers.ValidationError(
+#                 {"mh_user_id": f"Profile '{mh_user_id}' not found"}
+#             )
+
+#         patient_profile = getattr(profile, 'patient_profile', None)
+#         if patient_profile is None:
+#             patient_profile = PatientProfile.objects.create(profile=profile)
+
+#         # 2. Resolve doctor from request.user
+#         doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
+        
+#         if request.user.profile.role != 'doctor':
+#             raise serializers.ValidationError(
+#                 {"detail": "User not doctor"}
+#             )
+#         if not doctor_profile:
+#             doctor_profile = DoctorProfile.objects.create(profile=request.user.profile)
+#             # raise serializers.ValidationError(
+#             #     {"detail": "Only doctors can create prescriptions."}
+#             # )
+
+#         # 3. Create the prescription
+#         return Prescription.objects.create(
+#             patient_profile=patient_profile,
+#             doctor_profile=doctor_profile,
+#             status='active',
+#             **validated_data,
+#         )
         
         
 
@@ -282,63 +357,63 @@ class PrescriptionRefillSerializer(serializers.Serializer):
 class PrescriptionStatusUpdateSerializer(serializers.Serializer):
     """Serializer for updating prescription status"""
     
-    status = serializers.ChoiceField(choices=Prescription.STATUS_CHOICES, required=True)
+    # status = serializers.ChoiceField(choices=Prescription.STATUS_CHOICES, required=True)
     reason = serializers.CharField(required=False, allow_blank=True)
 
 
-class RefillRequestSerializer(serializers.ModelSerializer):
-    """Serializer for the RefillRequest model"""
+# class RefillRequestSerializer(serializers.ModelSerializer):
+#     """Serializer for the RefillRequest model"""
     
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
-    patient_name = serializers.SerializerMethodField()
-    medication_name = serializers.SerializerMethodField()
-    prescription_number = serializers.CharField(source='prescription.prescription_number', read_only=True)
-    reviewed_by_name = serializers.SerializerMethodField()
+#     status_display = serializers.CharField(source='get_status_display', read_only=True)
+#     patient_name = serializers.SerializerMethodField()
+#     medication_name = serializers.SerializerMethodField()
+#     prescription_number = serializers.CharField(source='prescription.prescription_number', read_only=True)
+#     reviewed_by_name = serializers.SerializerMethodField()
     
-    class Meta:
-        model = RefillRequest
-        fields = [
-            'id', 'prescription', 'prescription_number', 'patient_profile',
-            'patient_name', 'medication_name', 'status', 'status_display',
-            'reason', 'notes', 'requested_date', 'reviewed_date',
-            'reviewed_by', 'reviewed_by_name', 'review_notes',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ('id', 'requested_date', 'reviewed_date', 'created_at', 'updated_at')
+#     class Meta:
+#         model = RefillRequest
+#         fields = [
+#             'id', 'prescription', 'prescription_number', 'patient_profile',
+#             'patient_name', 'medication_name', 'status', 'status_display',
+#             'reason', 'notes', 'requested_date', 'reviewed_date',
+#             'reviewed_by', 'reviewed_by_name', 'review_notes',
+#             'created_at', 'updated_at'
+#         ]
+#         read_only_fields = ('id', 'requested_date', 'reviewed_date', 'created_at', 'updated_at')
     
-    def get_patient_name(self, obj):
-        return obj.patient_profile.profile.user.get_full_name()
+#     def get_patient_name(self, obj):
+#         return obj.patient_profile.profile.user.get_full_name()
     
-    def get_medication_name(self, obj):
-        return obj.prescription.medication_name
+#     def get_medication_name(self, obj):
+#         return obj.prescription.medication_name
     
-    def get_reviewed_by_name(self, obj):
-        if obj.reviewed_by:
-            return f"Dr. {obj.reviewed_by.profile.user.get_full_name()}"
-        return None
+#     def get_reviewed_by_name(self, obj):
+#         if obj.reviewed_by:
+#             return f"Dr. {obj.reviewed_by.profile.user.get_full_name()}"
+#         return None
 
 
-class RefillRequestCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating refill requests"""
+# class RefillRequestCreateSerializer(serializers.ModelSerializer):
+#     """Serializer for creating refill requests"""
     
-    class Meta:
-        model = RefillRequest
-        fields = ['prescription', 'reason', 'notes']
+#     class Meta:
+#         model = RefillRequest
+#         fields = ['prescription', 'reason', 'notes']
     
-    def validate(self, data):
-        prescription = data.get('prescription')
-        if not prescription.can_refill():
-            raise serializers.ValidationError(
-                "This prescription cannot be refilled"
-            )
-        return data
+#     def validate(self, data):
+#         prescription = data.get('prescription')
+#         if not prescription.can_refill():
+#             raise serializers.ValidationError(
+#                 "This prescription cannot be refilled"
+#             )
+#         return data
 
 
-class RefillRequestApproveSerializer(serializers.Serializer):
-    """Serializer for approving refill requests"""
+# class RefillRequestApproveSerializer(serializers.Serializer):
+#     """Serializer for approving refill requests"""
     
-    approved = serializers.BooleanField(required=True)
-    review_notes = serializers.CharField(required=False, allow_blank=True)
+#     approved = serializers.BooleanField(required=True)
+#     review_notes = serializers.CharField(required=False, allow_blank=True)
 
 
 class MedicationInteractionSerializer(serializers.ModelSerializer):

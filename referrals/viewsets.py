@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from accounts.permissions import IsDoctor, IsAdminOrDoctor
 
 from .throttles import (
     ReferralAnonThrottle,
@@ -191,7 +192,9 @@ class SpecialistReferralViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve', 'update_status', 'destroy']:
-            return [IsAdminUser()]
+            # return [IsAdminUser(), IsDoctor()]
+            return [IsAdminOrDoctor()] 
+        
         # create is open to public
         return [permissions.AllowAny()]
 
@@ -407,6 +410,7 @@ class SpecialistReferralViewSet(viewsets.ModelViewSet):
                 {'error': 'Referral not found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
+            
         return Response({
             'status': 'success',
             'data': SpecialistReferralSerializer(referral).data,

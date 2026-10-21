@@ -522,7 +522,7 @@ def handle_appointment_notification(sender, instance, created, **kwargs):
             Notification.objects.create(
                 user=instance.patient_profile.profile.user,
                 title="Appointment Pending",
-                message=f"Your appointment at {instance.clinic.name} is pending doctor assignment.",
+                message=f"Your appointment at is pending doctor assignment.",
                 notification_type='appointment'
             )
         return
@@ -585,52 +585,126 @@ def handle_appointment_notification(sender, instance, created, **kwargs):
                     notification_type='appointment'
                 )
 
-# Consultation Signals
+# apps/notifications/models.py
+from django.db.models.signals import pre_save, post_save
+from django.dispatch import receiver
+
+
+@receiver(pre_save, sender='consultations.Consultation')
+def track_consultation_previous_state(sender, instance, **kwargs):
+    """Track previous doctor + status so post_save can detect transitions."""
+    if not instance.pk:
+        instance._previous_doctor_id = None
+        instance._previous_status = None
+        return
+    try:
+        old = sender.objects.get(pk=instance.pk)
+        instance._previous_doctor_id = old.doctor_profile_id
+        instance._previous_status = old.status
+    except sender.DoesNotExist:
+        instance._previous_doctor_id = None
+        instance._previous_status = None
+
+
 @receiver(post_save, sender='consultations.Consultation')
 def handle_consultation_notification(sender, instance, created, **kwargs):
-    """Create notifications for consultation events"""
+    """Create notifications for consultation events (doctor-safe)."""
+
     handler = NotificationSignalHandler()
-    
+
     patient_user = instance.patient_profile.profile.user
-    doctor_user = instance.doctor_profile.profile.user
-    
-    if created:
-        # Consultation Started
+    doctor_user = (
+        instance.doctor_profile.profile.user
+        if instance.doctor_profile_id
+        else None
+    )
+
+    previous_doctor_id = getattr(instance, '_previous_doctor_id', None)
+    previous_status = getattr(instance, '_previous_status', None)
+
+    # A "start" event happens on:
+    #   1. First creation WITH a doctor
+    #   2. First assignment of a doctor to an existing consultation
+    doctor_just_assigned = (
+        not created
+        and instance.doctor_profile_id is not None
+        and previous_doctor_id is None
+    )
+    started = created and instance.doctor_profile_id is not None
+
+    if started or doctor_just_assigned:
+        patient_name = (
+            instance.patient_profile.profile.user.get_full_name()
+            or instance.patient_profile.profile.user.email
+        )
+        doctor_name = (
+            doctor_user.get_full_name() or doctor_user.email
+            if doctor_user
+            else 'your doctor'
+        )
+
+        # ── Patient notification ─────────────────────
         handler.create_notification(
             user=patient_user,
             notification_type='consultation_started',
             title='Consultation Started',
-            message=f'Your consultation with Dr. {instance.doctor_profile.profile.user.get_full_name()} has started.',
+            message=f'Your consultation with Dr. {doctor_name} has started.',
             priority='high',
             related_object_id=str(instance.id),
             related_object_type='consultation',
-            related_url=f'/consultations/{instance.id}/'
+            related_url=f'/consultations/{instance.id}/',
         )
-        
-        handler.create_notification(
-            user=doctor_user,
-            notification_type='consultation_started',
-            title='Consultation Started',
-            message=f'Consultation with {instance.patient_profile.profile.user.get_full_name()} has started.',
-            priority='high',
-            related_object_id=str(instance.id),
-            related_object_type='consultation',
-            related_url=f'/consultations/{instance.id}/'
+
+        # ── Doctor notification (only if a doctor exists) ──
+        if doctor_user:
+            handler.create_notification(
+                user=doctor_user,
+                notification_type='consultation_started',
+                title='Consultation Started',
+                message=f'Consultation with {patient_name} has started.',
+                priority='high',
+                related_object_id=str(instance.id),
+                related_object_type='consultation',
+                related_url=f'/consultations/{instance.id}/',
+            )
+
+    # ── Completion ────────────────────────────────
+    elif (
+        instance.status == 'completed'
+        and previous_status != 'completed'
+    ):
+        doctor_name = (
+            doctor_user.get_full_name() or doctor_user.email
+            if doctor_user
+            else 'your doctor'
         )
-    
-    elif instance.status == 'completed':
-        # Consultation Completed
+
         handler.create_notification(
             user=patient_user,
             notification_type='consultation_completed',
             title='Consultation Completed',
-            message=f'Your consultation with Dr. {instance.doctor_profile.profile.user.get_full_name()} has been completed.',
+            message=f'Your consultation with Dr. {doctor_name} has been completed.',
             priority='medium',
             related_object_id=str(instance.id),
             related_object_type='consultation',
-            related_url=f'/consultations/{instance.id}/'
+            related_url=f'/consultations/{instance.id}/',
         )
 
+        if doctor_user:
+            handler.create_notification(
+                user=doctor_user,
+                notification_type='consultation_completed',
+                title='Consultation Completed',
+                message=(
+                    f'Consultation with '
+                    f'{instance.patient_profile.profile.user.get_full_name()} '
+                    f'has been marked as completed.'
+                ),
+                priority='low',
+                related_object_id=str(instance.id),
+                related_object_type='consultation',
+                related_url=f'/consultations/{instance.id}/',
+            )
 
 # apps/chat/signals.py
 # from chat.models import Conversation
@@ -820,118 +894,107 @@ def handle_consultation_chat_cleanup(sender, instance, **kwargs):
             conversation.save()
 
 
-# Prescription Signals
+# apps/notifications/models.py
+
 @receiver(post_save, sender='prescriptions.Prescription')
 def handle_prescription_notification(sender, instance, created, **kwargs):
-    """Create notifications for prescription events"""
-    handler = NotificationSignalHandler()
-    
-    patient_user = instance.patient_profile.profile.user
-    doctor_user = instance.doctor_profile.profile.user
-    
-    if created:
-        # Prescription Created
-        med_name = instance.medication_name
-        handler.create_notification(
-            user=patient_user,
-            notification_type='prescription_created',
-            title='New Prescription',
-            message=f'A new prescription for {med_name} {instance.dosage} has been issued by Dr. {doctor_user.get_full_name()}.',
-            priority='high',
-            related_object_id=str(instance.id),
-            related_object_type='prescription',
-            related_url=f'/prescriptions/{instance.id}/'
-        )
-    
-    elif instance.status == 'cancelled':
-        # Prescription Cancelled
-        handler.create_notification(
-            user=patient_user,
-            notification_type='prescription_cancelled',
-            title='Prescription Cancelled',
-            message=f'Your prescription for {instance.medication_name} has been cancelled.',
-            priority='medium',
-            related_object_id=str(instance.id),
-            related_object_type='prescription',
-            related_url=f'/prescriptions/{instance.id}/'
-        )
-
-
-# Lab Test Signals
-@receiver(post_save, sender='labs.LabTestResult')
-def handle_lab_result_notification(sender, instance, created, **kwargs):
-    """Create notifications for lab results"""
+    """Notify the patient when a new prescription item is created."""
     if not created:
         return
-    
+
     handler = NotificationSignalHandler()
+
+    patient_user = instance.patient_profile.profile.user
+    doctor_user = instance.doctor_profile.profile.user
+
+    med_name = instance.name or 'prescription'
+    instructions = instance.instructions or ''
+    suffix = f" — {instructions}" if instructions else ''
+
+    handler.create_notification(
+        user=patient_user,
+        notification_type='prescription_created',
+        title='New Prescription',
+        message=(
+            f'A new prescription for "{med_name}"{suffix} has been issued '
+            f'by Dr. {doctor_user.get_full_name() or doctor_user.email}.'
+        ),
+        priority='high',
+        related_object_id=str(instance.id),
+        related_object_type='prescription',
+        related_url=f'/prescriptions/{instance.id}/',
+    )
     
-    patient_user = instance.order.patient_profile.profile.user
-    doctor_user = instance.order.doctor_profile.profile.user
-    
-    test_name = instance.order.test_catalog.name
-    
-    if instance.is_critical:
-        # Critical result - urgent notification
-        handler.create_notification(
-            user=doctor_user,
-            notification_type='lab_critical',
-            title='⚠️ CRITICAL LAB RESULT',
-            message=f'CRITICAL: {test_name} result is {instance.result_value} for {patient_user.get_full_name()}. Immediate review required.',
-            priority='critical',
-            related_object_id=str(instance.id),
-            related_object_type='lab_result',
-            related_url=f'/labs/results/{instance.id}/'
-        )
-        
-        handler.create_notification(
-            user=patient_user,
-            notification_type='lab_critical',
-            title='⚠️ Critical Lab Result',
-            message=f'Critical lab result detected for {test_name}. Your doctor will contact you shortly.',
-            priority='critical',
-            related_object_id=str(instance.id),
-            related_object_type='lab_result',
-            related_url=f'/labs/results/{instance.id}/'
-        )
-    
-    elif instance.is_abnormal:
-        # Abnormal result - high priority
-        handler.create_notification(
-            user=doctor_user,
-            notification_type='lab_abnormal',
-            title='Abnormal Lab Result',
-            message=f'Abnormal {test_name} result ({instance.result_value}) for {patient_user.get_full_name()}. Please review.',
-            priority='high',
-            related_object_id=str(instance.id),
-            related_object_type='lab_result',
-            related_url=f'/labs/results/{instance.id}/'
-        )
-        
-        handler.create_notification(
-            user=patient_user,
-            notification_type='lab_abnormal',
-            title='Lab Result Available',
-            message=f'Your {test_name} results are available. Please review with your doctor.',
-            priority='medium',
-            related_object_id=str(instance.id),
-            related_object_type='lab_result',
-            related_url=f'/labs/results/{instance.id}/'
-        )
-    else:
-        # Normal result
-        handler.create_notification(
-            user=patient_user,
-            notification_type='lab_results_ready',
-            title='Lab Results Ready',
-            message=f'Your {test_name} results are ready for review.',
-            priority='low',
-            related_object_id=str(instance.id),
-            related_object_type='lab_result',
-            related_url=f'/labs/results/{instance.id}/'
-        )
+# Lab Test Signals
+@receiver(post_save, sender='labs.LabTestOrder')
+def handle_lab_order_notification(sender, instance, created, **kwargs):
+    """Notify the patient when a lab test item is ordered."""
+    if not created:
+        return
+
+    handler = NotificationSignalHandler()
+
+    patient_user = instance.patient_profile.profile.user
+    doctor_user = instance.doctor_profile.profile.user
+
+    test_name = instance.test_name or 'Lab test'
+
+    handler.create_notification(
+        user=patient_user,
+        notification_type='lab_ordered',
+        title='Lab Test Ordered',
+        message=(
+            f'A lab test "{test_name}" has been ordered for you '
+            f'by Dr. {doctor_user.get_full_name() or doctor_user.email}.'
+        ),
+        priority='medium',
+        related_object_id=str(instance.id),
+        related_object_type='lab_order',
+        related_url=f'/labs/orders/{instance.id}/',
+    )
 
 
+@receiver(pre_save, sender='labs.LabTestOrder')
+def track_lab_previous_result(sender, instance, **kwargs):
+    """Track whether a result was previously empty so post_save can detect it."""
+    if not instance.pk:
+        instance._had_result = False
+        return
+    try:
+        old = sender.objects.get(pk=instance.pk)
+        instance._had_result = bool(old.result_value or old.attachment_urls)
+    except sender.DoesNotExist:
+        instance._had_result = False
+
+
+@receiver(post_save, sender='labs.LabTestOrder')
+def handle_lab_result_ready_notification(sender, instance, created, **kwargs):
+    """Notify the patient when a result is attached after creation."""
+    if created:
+        return
+    if getattr(instance, '_had_result', False):
+        return
+
+    has_result = bool(instance.result_value or instance.attachment_urls)
+    if not has_result:
+        return
+
+    handler = NotificationSignalHandler()
+
+    patient_user = instance.patient_profile.profile.user
+    test_name = instance.test_name or 'Lab test'
+
+    handler.create_notification(
+        user=patient_user,
+        notification_type='lab_results_ready',
+        title='Lab Results Ready',
+        message=f'Results for "{test_name}" are now available.',
+        priority='medium',
+        related_object_id=str(instance.id),
+        related_object_type='lab_order',
+        related_url=f'/labs/orders/{instance.id}/',
+    )
+    
 # Queue Signals
 @receiver(post_save, sender='appointments.QueueEntry')
 def handle_queue_notification(sender, instance, created, **kwargs):

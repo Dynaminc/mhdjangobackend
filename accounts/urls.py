@@ -21,6 +21,10 @@ urlpatterns = [
         'post': 'create',   # POST request -> create action
     }), name='profile-list'),
     
+    path('profiles/by-mh-user-id/', ProfileViewSet.as_view({
+        'get': 'get_by_mh_user_id',
+    }), name='profile-by-mh-user-id'),
+    
     path('profiles/<int:pk>/', ProfileViewSet.as_view({
         'get': 'retrieve',     # GET request -> retrieve action
         'put': 'update',       # PUT request -> update action
@@ -45,9 +49,11 @@ urlpatterns = [
         'get': 'get_full_profile',
     }), name='profile-full'),
     
+    
     path('profiles/<int:pk>/role/', ProfileViewSet.as_view({
         'patch': 'update_role',
     }), name='profile-role'),    
+    
     path('profile/', CurrentUserProfileView.as_view(), name='current-profile'),
     
     # Initial Onboarding (Step 1)

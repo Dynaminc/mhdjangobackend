@@ -28,8 +28,13 @@ DEBUG = True
 DEBUG_PROPAGATE_EXCEPTIONS = True
 
 ALLOWED_HOSTS = ['*']
-
-
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
+# ── S3 (commented out — enable when switching storage backend) ──
+# AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+# AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+# AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME')
+# AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
 # Application definition
 
 INSTALLED_APPS = [
@@ -62,6 +67,7 @@ INSTALLED_APPS = [
     'labs',
     'chat',
     'referrals',
+    'files',
     
     'payments',
     'notifications',

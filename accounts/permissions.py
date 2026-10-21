@@ -3,6 +3,28 @@ from rest_framework import permissions
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
+
+
+class IsAdminOrDoctor(BasePermission):
+    """
+    Allow access if the user is staff/admin OR has a doctor profile.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+
+        # Admin / staff
+        if user.is_staff or user.is_superuser:
+            return True
+
+        # Doctor
+        profile = getattr(user, 'profile', None)
+        if profile and getattr(profile, 'role', None) == 'doctor':
+            return True
+
+        return False
+    
 class IsAuthenticated(BasePermission):
     """
     Allows access only to authenticated users.

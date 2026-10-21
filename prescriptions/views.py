@@ -12,7 +12,7 @@ from drf_yasg import openapi
 from .models import (
     MedicationCatalog,
     Prescription,
-    RefillRequest,
+    # RefillRequest,
     MedicationInteraction,
     MedicationSchedule,
     MedicationAdherence
@@ -26,9 +26,9 @@ from .serializers import (
     PrescriptionWithSchedulesSerializer,
     PrescriptionRefillSerializer,
     PrescriptionStatusUpdateSerializer,
-    RefillRequestSerializer,
-    RefillRequestCreateSerializer,
-    RefillRequestApproveSerializer,
+    # RefillRequestSerializer,
+    # RefillRequestCreateSerializer,
+    # RefillRequestApproveSerializer,
     MedicationInteractionSerializer,
     MedicationScheduleSerializer,
     MedicationAdherenceSerializer,
@@ -537,118 +537,118 @@ class MedicationCatalogViewSet(viewsets.ModelViewSet):
 #         return Response(serializer.data)
 
 
-class RefillRequestViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing refill requests
+# class RefillRequestViewSet(viewsets.ModelViewSet):
+#     """
+#     ViewSet for managing refill requests
     
-    Provides CRUD operations for refill requests and actions for approving/rejecting
-    """
+#     Provides CRUD operations for refill requests and actions for approving/rejecting
+#     """
     
-    queryset = RefillRequest.objects.all()
-    permission_classes = [IsDoctorOrPatient]
+#     queryset = RefillRequest.objects.all()
+#     permission_classes = [IsDoctorOrPatient]
     
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        user = self.request.user
+#     def get_queryset(self):
+#         queryset = super().get_queryset()
+#         user = self.request.user
         
-        if hasattr(user, 'profile'):
-            if hasattr(user.profile, 'patient_profile'):
-                # Patient can see their own refill requests
-                return queryset.filter(patient_profile=user.profile.patient_profile)
-            elif hasattr(user.profile, 'doctor_profile'):
-                # Doctor can see refill requests for their patients
-                doctor = user.profile.doctor_profile
-                return queryset.filter(
-                    prescription__doctor_profile=doctor
-                ).distinct()
+#         if hasattr(user, 'profile'):
+#             if hasattr(user.profile, 'patient_profile'):
+#                 # Patient can see their own refill requests
+#                 return queryset.filter(patient_profile=user.profile.patient_profile)
+#             elif hasattr(user.profile, 'doctor_profile'):
+#                 # Doctor can see refill requests for their patients
+#                 doctor = user.profile.doctor_profile
+#                 return queryset.filter(
+#                     prescription__doctor_profile=doctor
+#                 ).distinct()
         
-        return queryset.none()
+#         return queryset.none()
     
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return RefillRequestCreateSerializer
-        return RefillRequestSerializer
+#     def get_serializer_class(self):
+#         if self.action == 'create':
+#             return RefillRequestCreateSerializer
+#         return RefillRequestSerializer
     
-    def perform_create(self, serializer):
-        """Set patient_profile from request user"""
-        request = self.context.get('request')
-        if hasattr(request.user, 'profile') and hasattr(request.user.profile, 'patient_profile'):
-            serializer.save(patient_profile=request.user.profile.patient_profile)
-        else:
-            raise PermissionError("Only patients can create refill requests")
+#     def perform_create(self, serializer):
+#         """Set patient_profile from request user"""
+#         request = self.context.get('request')
+#         if hasattr(request.user, 'profile') and hasattr(request.user.profile, 'patient_profile'):
+#             serializer.save(patient_profile=request.user.profile.patient_profile)
+#         else:
+#             raise PermissionError("Only patients can create refill requests")
     
-    @swagger_auto_schema(
-        methods=['post'],
-        request_body=RefillRequestApproveSerializer,
-        responses={
-            200: RefillRequestSerializer(),
-            400: "Bad Request",
-            404: "Request not found",
-            409: "Already processed"
-        },
-        operation_description="Approve or reject a refill request"
-    )
-    @action(detail=True, methods=['post'], url_path='review')
-    def review_request(self, request, pk=None):
-        """
-        Review and approve/reject a refill request
-        """
-        refill_request = self.get_object()
+#     @swagger_auto_schema(
+#         methods=['post'],
+#         request_body=RefillRequestApproveSerializer,
+#         responses={
+#             200: RefillRequestSerializer(),
+#             400: "Bad Request",
+#             404: "Request not found",
+#             409: "Already processed"
+#         },
+#         operation_description="Approve or reject a refill request"
+#     )
+#     @action(detail=True, methods=['post'], url_path='review')
+#     def review_request(self, request, pk=None):
+#         """
+#         Review and approve/reject a refill request
+#         """
+#         refill_request = self.get_object()
         
-        # Check permissions - only doctors can review
-        if not hasattr(request.user, 'profile') or not hasattr(request.user.profile, 'doctor_profile'):
-            return Response(
-                {"error": "Only doctors can review refill requests"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+#         # Check permissions - only doctors can review
+#         if not hasattr(request.user, 'profile') or not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response(
+#                 {"error": "Only doctors can review refill requests"},
+#                 status=status.HTTP_403_FORBIDDEN
+#             )
         
-        if refill_request.status != 'pending':
-            return Response(
-                {"error": f"This request has already been {refill_request.status}"},
-                status=status.HTTP_409_CONFLICT
-            )
+#         if refill_request.status != 'pending':
+#             return Response(
+#                 {"error": f"This request has already been {refill_request.status}"},
+#                 status=status.HTTP_409_CONFLICT
+#             )
         
-        serializer = RefillRequestApproveSerializer(data=request.data)
-        if serializer.is_valid():
-            approved = serializer.validated_data['approved']
-            review_notes = serializer.validated_data.get('review_notes', '')
+#         serializer = RefillRequestApproveSerializer(data=request.data)
+#         if serializer.is_valid():
+#             approved = serializer.validated_data['approved']
+#             review_notes = serializer.validated_data.get('review_notes', '')
             
-            doctor = request.user.profile.doctor_profile
+#             doctor = request.user.profile.doctor_profile
             
-            if approved:
-                refill_request.approve(doctor)
-                # Add review notes
-                if review_notes:
-                    refill_request.review_notes = review_notes
-                    refill_request.save()
-                message = "Refill request approved"
-            else:
-                refill_request.reject(doctor, review_notes)
-                message = "Refill request rejected"
+#             if approved:
+#                 refill_request.approve(doctor)
+#                 # Add review notes
+#                 if review_notes:
+#                     refill_request.review_notes = review_notes
+#                     refill_request.save()
+#                 message = "Refill request approved"
+#             else:
+#                 refill_request.reject(doctor, review_notes)
+#                 message = "Refill request rejected"
             
-            result_serializer = RefillRequestSerializer(refill_request)
-            return Response({
-                'message': message,
-                'data': result_serializer.data
-            })
+#             result_serializer = RefillRequestSerializer(refill_request)
+#             return Response({
+#                 'message': message,
+#                 'data': result_serializer.data
+#             })
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    @swagger_auto_schema(
-        responses={
-            200: RefillRequestSerializer(many=True),
-            400: "Bad Request"
-        },
-        operation_description="Get pending refill requests"
-    )
-    @action(detail=False, methods=['get'], url_path='pending')
-    def get_pending_requests(self, request):
-        """
-        Get all pending refill requests
-        """
-        requests = self.get_queryset().filter(status='pending')
-        serializer = RefillRequestSerializer(requests, many=True)
-        return Response(serializer.data)
+#     @swagger_auto_schema(
+#         responses={
+#             200: RefillRequestSerializer(many=True),
+#             400: "Bad Request"
+#         },
+#         operation_description="Get pending refill requests"
+#     )
+#     @action(detail=False, methods=['get'], url_path='pending')
+#     def get_pending_requests(self, request):
+#         """
+#         Get all pending refill requests
+#         """
+#         requests = self.get_queryset().filter(status='pending')
+#         serializer = RefillRequestSerializer(requests, many=True)
+#         return Response(serializer.data)
 
 
 class MedicationInteractionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -834,6 +834,20 @@ from .serializers import PrescriptionSerializer, PrescriptionCreateSerializer
 from accounts.models import Profile
 from accounts.permissions import IsDoctor, IsDoctorOrPatient
 
+# apps/prescriptions/viewsets.py
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+from django.db import transaction
+
+
+from .models import Prescription
+from .serializers import PrescriptionSerializer, PrescriptionCreateSerializer
+from accounts.models import Profile
+from accounts.permissions import IsDoctorOrPatient
+
 
 class PrescriptionViewSet(viewsets.ModelViewSet):
     queryset = Prescription.objects.all()
@@ -845,21 +859,23 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         return PrescriptionSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().order_by('-created_at')
         user = self.request.user
-        if not hasattr(user, 'profile'):
-            return qs.none()
+        profile = getattr(user, 'profile', None)
 
-        if hasattr(user.profile, 'patient_profile'):
-            return qs.filter(patient_profile=user.profile.patient_profile)
-        if hasattr(user.profile, 'doctor_profile'):
-            return qs.filter(doctor_profile=user.profile.doctor_profile)
+        if profile is None:
+            return qs.none()
         if user.is_staff:
             return qs
+        if profile.role == 'doctor':
+            dp = getattr(profile, 'doctor_profile', None)
+            return qs.filter(doctor_profile=dp) if dp else qs.none()
+        if profile.role == 'patient':
+            pp = getattr(profile, 'patient_profile', None)
+            return qs.filter(patient_profile=pp) if pp else qs.none()
         return qs.none()
 
     def create(self, request, *args, **kwargs):
-        """Create a prescription using mh_user_id"""
         serializer = PrescriptionCreateSerializer(
             data=request.data, context={'request': request}
         )
@@ -870,19 +886,13 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    # ==========================================
-    # FETCH by mh_user_id
-    # ==========================================
     @swagger_auto_schema(
         operation_description="Get prescriptions by mh_user_id",
         manual_parameters=[
-            openapi.Parameter(
-                'mh_user_id', openapi.IN_QUERY,
-                description="Patient mh_user_id",
-                type=openapi.TYPE_STRING, required=True
-            )
+            openapi.Parameter('mh_user_id', openapi.IN_QUERY,
+                              type=openapi.TYPE_STRING, required=True),
         ],
-        responses={200: PrescriptionSerializer(many=True)}
+        responses={200: PrescriptionSerializer(many=True)},
     )
     @action(detail=False, methods=['get'], url_path='by-mh-user-id')
     def get_by_mh_user_id(self, request):
@@ -890,27 +900,12 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         if not mh_user_id:
             return Response(
                 {'error': 'mh_user_id is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            profile = Profile.objects.get(mh_user_id=mh_user_id)
-        except Profile.DoesNotExist:
-            return Response(
-                {'error': f"Profile '{mh_user_id}' not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        patient_profile = getattr(profile, 'patient_profile', None)
-        if not patient_profile:
-            return Response(
-                {'error': 'Patient profile not found'},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         qs = Prescription.objects.filter(
-            patient_profile=patient_profile
-        ).order_by('-prescribed_date')
+            patient_profile__profile__mh_user_id=mh_user_id
+        ).order_by('-created_at')
 
         return Response({
             'status': 'success',
@@ -918,79 +913,276 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             'count': qs.count(),
             'data': PrescriptionSerializer(qs, many=True).data,
         })
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._assert_can_modify(request.user, instance)
+        return super().update(request, *args, **kwargs)
 
-    # ==========================================
-    # Refill by mh_user_id
-    # ==========================================
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._assert_can_modify(request.user, instance)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._assert_can_modify(request.user, instance)
+        return super().destroy(request, *args, **kwargs)
+
+    def _assert_can_modify(self, user, instance):
+        from rest_framework.exceptions import PermissionDenied
+        profile = getattr(user, 'profile', None)
+        if user.is_staff:
+            return
+        if profile is None or profile.role != 'doctor':
+            raise PermissionDenied('Only the prescribing doctor can modify this item.')
+        doctor = getattr(profile, 'doctor_profile', None)
+        if not doctor or instance.doctor_profile_id != doctor.id:
+            raise PermissionDenied('Only the prescribing doctor can modify this item.')        
+
     @swagger_auto_schema(
-        operation_description="Refill a prescription (by prescription_number)",
+        operation_description="Replace the entire prescription list for a consultation",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'prescription_number': openapi.Schema(
-                    type=openapi.TYPE_STRING, description='e.g. RX-2026-0001'
+                'mh_user_id': openapi.Schema(type=openapi.TYPE_STRING),
+                'consultation_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'items': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'name': openapi.Schema(type=openapi.TYPE_STRING),
+                            'instructions': openapi.Schema(type=openapi.TYPE_STRING),
+                            'quantity': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        },
+                    ),
                 ),
             },
-            required=['prescription_number']
+            required=['mh_user_id', 'items'],
         ),
-        responses={200: PrescriptionSerializer()}
+        responses={200: PrescriptionSerializer(many=True)},
     )
-    @action(detail=False, methods=['post'], url_path='refill')
-    def refill(self, request):
-        number = request.data.get('prescription_number')
-        if not number:
-            return Response(
-                {'error': 'prescription_number is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    @action(detail=False, methods=['post'], url_path='replace-list')
+    def replace_list(self, request):
+        mh_user_id = request.data.get('mh_user_id')
+        consultation_id = request.data.get('consultation_id')
+        items = request.data.get('items', [])
+
+        # Resolve patient
+        from accounts.models import Profile, PatientProfile
+        from consultations.models import Consultation
+        from rest_framework.exceptions import ValidationError, PermissionDenied
 
         try:
-            prescription = Prescription.objects.get(prescription_number=number)
-        except Prescription.DoesNotExist:
-            return Response(
-                {'error': 'Prescription not found'},
-                status=status.HTTP_404_NOT_FOUND
+            profile = Profile.objects.get(mh_user_id=mh_user_id)
+        except Profile.DoesNotExist:
+            raise ValidationError({'mh_user_id': 'not found'})
+        patient_profile = getattr(profile, 'patient_profile', None)
+        if patient_profile is None:
+            patient_profile = PatientProfile.objects.create(profile=profile)
+
+        # Doctor
+        doctor = getattr(request.user.profile, 'doctor_profile', None)
+        if not doctor:
+            raise PermissionDenied('Only doctors can modify prescriptions.')
+
+        # Consultation
+        consultation = None
+        if consultation_id:
+            try:
+                consultation = Consultation.objects.get(id=consultation_id)
+            except Consultation.DoesNotExist:
+                raise ValidationError({'consultation_id': 'not found'})
+            if consultation.patient_profile_id != patient_profile.id:
+                raise ValidationError({'consultation_id': 'does not belong to this patient'})
+
+        with transaction.atomic():
+            # Delete existing items for this consultation + doctor + patient
+            qs = Prescription.objects.filter(
+                patient_profile=patient_profile,
+                doctor_profile=doctor,
             )
+            if consultation:
+                qs = qs.filter(consultation=consultation)
+            else:
+                qs = qs.filter(consultation__isnull=True)
+            qs.delete()
 
-        if not prescription.can_refill():
-            return Response(
-                {'error': 'This prescription cannot be refilled'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # Recreate from payload
+            created = [
+                Prescription.objects.create(
+                    consultation=consultation,
+                    patient_profile=patient_profile,
+                    doctor_profile=doctor,
+                    name=item.get('name', '').strip(),
+                    instructions=item.get('instructions', ''),
+                    quantity=item.get('quantity', 1),
+                )
+                for item in items
+                if item.get('name')
+            ]
 
-        prescription.use_refill()
-        return Response(PrescriptionSerializer(prescription).data)
+        return Response({
+            'status': 'success',
+            'count': len(created),
+            'data': PrescriptionSerializer(created, many=True).data,
+        })        
+# class PrescriptionViewSet(viewsets.ModelViewSet):
+#     queryset = Prescription.objects.all()
+#     permission_classes = [IsDoctorOrPatient]
 
-    # ==========================================
-    # Cancel by prescription_number
-    # ==========================================
-    @swagger_auto_schema(
-        operation_description="Cancel a prescription",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'prescription_number': openapi.Schema(type=openapi.TYPE_STRING),
-            },
-            required=['prescription_number']
-        ),
-        responses={200: PrescriptionSerializer()}
-    )
-    @action(detail=False, methods=['post'], url_path='cancel')
-    def cancel(self, request):
-        number = request.data.get('prescription_number')
-        if not number:
-            return Response(
-                {'error': 'prescription_number is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+#     def get_serializer_class(self):
+#         if self.action == 'create':
+#             return PrescriptionCreateSerializer
+#         return PrescriptionSerializer
 
-        try:
-            prescription = Prescription.objects.get(prescription_number=number)
-        except Prescription.DoesNotExist:
-            return Response(
-                {'error': 'Prescription not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+#     def get_queryset(self):
+#         qs = super().get_queryset()
+#         user = self.request.user
+#         if not hasattr(user, 'profile'):
+#             return qs.none()
 
-        prescription.cancel()
-        return Response(PrescriptionSerializer(prescription).data)
+#         if hasattr(user.profile, 'patient_profile'):
+#             return qs.filter(patient_profile=user.profile.patient_profile)
+#         if hasattr(user.profile, 'doctor_profile'):
+#             return qs.filter(doctor_profile=user.profile.doctor_profile)
+#         if user.is_staff:
+#             return qs
+#         return qs.none()
+
+#     def create(self, request, *args, **kwargs):
+#         """Create a prescription using mh_user_id"""
+#         serializer = PrescriptionCreateSerializer(
+#             data=request.data, context={'request': request}
+#         )
+#         serializer.is_valid(raise_exception=True)
+#         prescription = serializer.save()
+#         return Response(
+#             PrescriptionSerializer(prescription).data,
+#             status=status.HTTP_201_CREATED,
+#         )
+
+#     # ==========================================
+#     # FETCH by mh_user_id
+#     # ==========================================
+#     @swagger_auto_schema(
+#         operation_description="Get prescriptions by mh_user_id",
+#         manual_parameters=[
+#             openapi.Parameter(
+#                 'mh_user_id', openapi.IN_QUERY,
+#                 description="Patient mh_user_id",
+#                 type=openapi.TYPE_STRING, required=True
+#             )
+#         ],
+#         responses={200: PrescriptionSerializer(many=True)}
+#     )
+#     @action(detail=False, methods=['get'], url_path='by-mh-user-id')
+#     def get_by_mh_user_id(self, request):
+#         mh_user_id = request.query_params.get('mh_user_id')
+#         if not mh_user_id:
+#             return Response(
+#                 {'error': 'mh_user_id is required'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         try:
+#             profile = Profile.objects.get(mh_user_id=mh_user_id)
+#         except Profile.DoesNotExist:
+#             return Response(
+#                 {'error': f"Profile '{mh_user_id}' not found"},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
+
+#         patient_profile = getattr(profile, 'patient_profile', None)
+#         if not patient_profile:
+#             return Response(
+#                 {'error': 'Patient profile not found'},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
+
+#         qs = Prescription.objects.filter(
+#             patient_profile=patient_profile
+#         ).order_by('-prescribed_date')
+
+#         return Response({
+#             'status': 'success',
+#             'mh_user_id': mh_user_id,
+#             'count': qs.count(),
+#             'data': PrescriptionSerializer(qs, many=True).data,
+#         })
+
+#     # ==========================================
+#     # Refill by mh_user_id
+#     # ==========================================
+#     @swagger_auto_schema(
+#         operation_description="Refill a prescription (by prescription_number)",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'prescription_number': openapi.Schema(
+#                     type=openapi.TYPE_STRING, description='e.g. RX-2026-0001'
+#                 ),
+#             },
+#             required=['prescription_number']
+#         ),
+#         responses={200: PrescriptionSerializer()}
+#     )
+#     @action(detail=False, methods=['post'], url_path='refill')
+#     def refill(self, request):
+#         number = request.data.get('prescription_number')
+#         if not number:
+#             return Response(
+#                 {'error': 'prescription_number is required'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         try:
+#             prescription = Prescription.objects.get(prescription_number=number)
+#         except Prescription.DoesNotExist:
+#             return Response(
+#                 {'error': 'Prescription not found'},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
+
+#         if not prescription.can_refill():
+#             return Response(
+#                 {'error': 'This prescription cannot be refilled'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         prescription.use_refill()
+#         return Response(PrescriptionSerializer(prescription).data)
+
+#     # ==========================================
+#     # Cancel by prescription_number
+#     # ==========================================
+#     @swagger_auto_schema(
+#         operation_description="Cancel a prescription",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'prescription_number': openapi.Schema(type=openapi.TYPE_STRING),
+#             },
+#             required=['prescription_number']
+#         ),
+#         responses={200: PrescriptionSerializer()}
+#     )
+#     @action(detail=False, methods=['post'], url_path='cancel')
+#     def cancel(self, request):
+#         number = request.data.get('prescription_number')
+#         if not number:
+#             return Response(
+#                 {'error': 'prescription_number is required'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         try:
+#             prescription = Prescription.objects.get(prescription_number=number)
+#         except Prescription.DoesNotExist:
+#             return Response(
+#                 {'error': 'Prescription not found'},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
+
+#         prescription.cancel()
+#         return Response(PrescriptionSerializer(prescription).data)

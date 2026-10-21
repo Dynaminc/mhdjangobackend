@@ -4,7 +4,6 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     MedicationCatalogViewSet,
     PrescriptionViewSet,
-    RefillRequestViewSet,
     MedicationInteractionViewSet,
     MedicationAdherenceViewSet
 )
@@ -12,7 +11,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'medications', MedicationCatalogViewSet, basename='medication-catalog')
 router.register(r'prescriptions', PrescriptionViewSet, basename='prescription')
-router.register(r'refill-requests', RefillRequestViewSet, basename='refill-request')
+# router.register(r'refill-requests', RefillRequestViewSet, basename='refill-request')
 router.register(r'interactions', MedicationInteractionViewSet, basename='medication-interaction')
 router.register(r'adherence', MedicationAdherenceViewSet, basename='medication-adherence')
 

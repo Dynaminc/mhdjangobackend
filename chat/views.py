@@ -26,7 +26,8 @@ from .models import Conversation
 from .serializers import ConversationSerializer, ConversationCreateSerializer
 from accounts.models import Profile
 from accounts.permissions import IsDoctor, IsDoctorOrPatient
-
+from appointments.models import Appointment
+from consultations.models import Consultation
 
 class ConversationViewSet(viewsets.ModelViewSet):
     """
@@ -82,194 +83,6 @@ class ConversationViewSet(viewsets.ModelViewSet):
         # Return a queryset containing just that one row
         return base.filter(id=latest_ongoing.id)
 
-    # def get_queryset(self):
-    #     qs = super().get_queryset()
-    #     user = self.request.user
-    #     profile = getattr(user, 'profile', None)
-
-    #     if profile is None:
-    #         result = qs.none()
-    #     elif user.is_staff:
-    #         result = qs
-    #     elif hasattr(profile, 'patient_profile'):
-    #         result = qs.filter(patient_profile=profile.patient_profile)
-    #     elif hasattr(profile, 'doctor_profile'):
-    #         result = qs.filter(doctor_profile=profile.doctor_profile)
-    #     else:
-    #         result = qs.none()
-    #     print('here',ConversationSerializer(result.first()).data)
-    #     return result        
-    
-    # def get_queryset(self):
-    #     qs = super().get_queryset()
-    #     user = self.request.user
-
-    #     print("\n" + "=" * 72)
-    #     print("🔎 ConversationViewSet.get_queryset")
-    #     print("=" * 72)
-    #     print(f"user                = {user}")
-    #     print(f"is_authenticated    = {user.is_authenticated}")
-    #     print(f"is_staff            = {user.is_staff}")
-    #     print(f"DB total conv       = {Conversation.objects.count()}")
-
-    #     # ─────────────────────────────────────────────────────
-    #     # FULL DUMP of every conversation in the DB
-    #     # ─────────────────────────────────────────────────────
-    #     print("\n─── All conversations in DB ─────────────────────────────")
-    #     for c in Conversation.objects.select_related(
-    #         'patient_profile__profile__user',
-    #         'doctor_profile__profile__user',
-    #         'consultation',
-    #     ).order_by('-created_at'):
-    #         try:
-    #             p_user = c.patient_profile.profile.user
-    #             patient_label = f"{p_user.get_full_name() or p_user.email} ({c.patient_profile.profile.mh_user_id})"
-    #         except Exception as e:
-    #             patient_label = f"<error: {e}>"
-
-    #         try:
-    #             d_user = c.doctor_profile.profile.user if c.doctor_profile else None
-    #             doctor_label = f"Dr. {d_user.get_full_name() or d_user.email}" if d_user else "—"
-    #         except Exception as e:
-    #             doctor_label = f"<error: {e}>"
-
-    #         print(
-    #             f"  id={c.id:<4} "
-    #             f"conv_id={c.conversation_id} "
-    #             f"pp_id={c.patient_profile_id} "
-    #             f"dp_id={c.doctor_profile_id} "
-    #             f"consult={c.consultation_id} "
-    #             f"active={c.is_active} "
-    #             f"| patient={patient_label} "
-    #             f"| doctor={doctor_label} "
-    #             f"| started={c.started_at}"
-    #         )
-    #     print("─── End DB dump ────────────────────────────────────────\n")
-
-    #     # ─────────────────────────────────────────────────────
-    #     # Resolve profile
-    #     # ─────────────────────────────────────────────────────
-    #     if not hasattr(user, 'profile'):
-    #         print("❌ user has no .profile → returning NONE")
-    #         print("=" * 72 + "\n")
-    #         return qs.none()
-
-    #     profile = user.profile
-    #     print(f"profile.id          = {profile.id}")
-    #     print(f"profile.role        = {profile.role}")
-    #     print(f"profile.mh_user_id  = {profile.mh_user_id}")
-
-    #     # ─────────────────────────────────────────────────────
-    #     # Staff — see everything
-    #     # ─────────────────────────────────────────────────────
-    #     if user.is_staff:
-    #         result = qs
-    #         print(f"\n✅ staff → returning ALL ({result.count()})")
-    #         print("─── Returning to caller ────────────────────────────────")
-    #         for c in result:
-    #             print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
-    #         print("=" * 72 + "\n")
-    #         return result
-
-    #     # ─────────────────────────────────────────────────────
-    #     # Patient — only their own
-    #     # ─────────────────────────────────────────────────────
-    #     patient_profile = getattr(profile, 'patient_profile', None)
-    #     if patient_profile is not None:
-    #         print(f"\n👤 PATIENT branch")
-    #         print(f"patient_profile.id  = {patient_profile.id}")
-
-    #         raw = Conversation.objects.filter(patient_profile=patient_profile)
-    #         print(f"raw conversations for this patient = {raw.count()}")
-    #         for c in raw:
-    #             print(f"   → id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
-
-    #         result = qs.filter(patient_profile=patient_profile)
-    #         print(f"\nfiltered qs count   = {result.count()}")
-    #         print("─── Returning to caller ────────────────────────────────")
-    #         for c in result:
-    #             print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id}")
-    #         print("=" * 72 + "\n")
-    #         return result
-
-    #     # ─────────────────────────────────────────────────────
-    #     # Doctor — everything (or restrict to their own)
-    #     # ─────────────────────────────────────────────────────
-    #     if hasattr(profile, 'doctor_profile'):
-    #         doctor_profile = profile.doctor_profile
-    #         print(f"\n🩺 DOCTOR branch")
-    #         print(f"doctor_profile.id   = {doctor_profile.id}")
-
-    #         raw = Conversation.objects.filter(doctor_profile=doctor_profile)
-    #         print(f"raw conversations for this doctor = {raw.count()}")
-    #         for c in raw:
-    #             print(f"   → id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id} dp_id={c.doctor_profile_id}")
-
-    #         # Option A — doctors see everything
-    #         result = qs
-    #         print(f"\nreturning ALL ({result.count()})")
-    #         print("─── Returning to caller ────────────────────────────────")
-    #         for c in result:
-    #             print(f"  id={c.id} conv_id={c.conversation_id} pp_id={c.patient_profile_id} dp_id={c.doctor_profile_id}")
-    #         print("=" * 72 + "\n")
-    #         return result
-
-    #         # Option B — only their own (uncomment if you prefer)
-    #         # result = qs.filter(doctor_profile=doctor_profile)
-    #         # print(f"filtered qs count = {result.count()}")
-    #         # return result
-
-    #     print("❌ unrecognized role → returning NONE")
-    #     print("=" * 72 + "\n")
-    #     return qs.none()
-           
-    # apps/chat/views.py
-    # def get_queryset(self):
-    #     qs = super().get_queryset()
-    #     user = self.request.user
-    #     return qs.filter(patient_profile=user.profile.patient_profile)        
-    #     print(qs)
-    #     for item in list(qs):
-    #         patient_profile = PatientProfile.objects.filter(profile=user.profile).first()
-    #         print(item.patient_profile, item.patient_profile_id, patient_profile, patient_profile.id)
-    #         # print(item['mh_user_id'])
-    #         # user.profile.patient_profile
-
-    #     if not hasattr(user, 'profile'):
-    #         return qs.none()
-
-    #     # Staff see everything
-    #     if user.is_staff:
-    #         return qs
-
-    #     # Patients see only their own
-    #     if hasattr(user.profile, 'patient_profile'):
-    #         print(user.profile, 'prile hre ',user.profile.patient_profile)
-            
-    #         print('Profile profile',user.profile.patient_profile.id)
-    #         print('dede', qs.filter(patient_profile=user.profile.patient_profile))
-    #         return qs.filter(patient_profile=user.profile.patient_profile)
-
-    #     # Doctors see everything (or restrict to their own — your choice)
-    #     if hasattr(user.profile, 'doctor_profile'):
-    #         return qs
-    #         # If you want "only mine", use:
-    #         # return qs.filter(doctor_profile=user.profile.doctor_profile)
-
-            # return qs.none()
-    # def get_queryset(self):
-    #     qs = super().get_queryset()
-    #     user = self.request.user
-    #     if not hasattr(user, 'profile'):
-    #         return qs.none()
-
-    #     if hasattr(user.profile, 'patient_profile'):
-    #         return qs.filter(patient_profile=user.profile.patient_profile)
-    #     if hasattr(user.profile, 'doctor_profile'):
-    #         return qs.filter(doctor_profile=user.profile.doctor_profile)
-    #     if user.is_staff:
-    #         return qs
-    #     return qs.none()
 
     def get_permissions(self):
         if self.action == 'create':
@@ -410,18 +223,103 @@ class ConversationViewSet(viewsets.ModelViewSet):
     # -------------------------------------------------
     # CLOSE
     # -------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Close the conversation",
-        responses={200: ConversationSerializer()}
-    )
-    @action(detail=True, methods=['post'], url_path='close')
-    def close(self, request, pk=None):
-        conversation = self.get_object()
-        conversation.is_active = False
-        conversation.ended_at = timezone.now()
-        conversation.save()
-        return Response(ConversationSerializer(conversation).data)
+    # @swagger_auto_schema(
+    #     operation_description="Close the conversation",
+    #     responses={200: ConversationSerializer()}
+    # )
+    # @action(detail=True, methods=['post'], url_path='close')
+    # def close(self, request, pk=None):
+    #     conversation = self.get_object()
+    #     conversation.is_active = False
+    #     conversation.ended_at = timezone.now()
+    #     conversation.save()
+    #     return Response(ConversationSerializer(conversation).data)
 
+    @swagger_auto_schema(
+        operation_description=(
+            "End the conversation and close the linked appointment "
+            "and consultation. Only the assigned doctor can call this."
+        ),
+        responses={200: openapi.Response('Ended')}
+    )
+    @action(detail=True, methods=['post'], url_path='end')
+    def end_conversation(self, request, pk=None):
+        conversation = self.get_object()
+
+        # ── Only the assigned doctor ──────────────────────────
+        profile = getattr(request.user, 'profile', None)
+        if profile is None or profile.role != 'doctor':
+            return Response(
+                {'status': 'error', 'message': 'Only doctors can end conversations'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        doctor_profile = getattr(profile, 'doctor_profile', None)
+        if doctor_profile is None or conversation.doctor_profile_id != doctor_profile.id:
+            return Response(
+                {'status': 'error', 'message': 'You are not assigned to this conversation'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        now = timezone.now()
+
+        # ── 1. End the conversation ───────────────────────────
+        if conversation.is_active:
+            conversation.is_active = False
+            conversation.ended_at = now
+            conversation.save(update_fields=['is_active', 'ended_at', 'updated_at'])
+
+        # ── 2. Close the linked appointment ───────────────────
+        appointment_closed = False
+        appointment = (
+            Appointment.objects
+            .filter(
+                patient_profile=conversation.patient_profile,
+                doctor_profile=conversation.doctor_profile,
+                status__in=['scheduled', 'confirmed', 'in_progress'],
+            )
+            .order_by('-appointment_date', '-start_time')
+            .first()
+        )
+        if appointment is not None:
+            appointment.status = 'completed'
+            appointment.save(update_fields=['status', 'updated_at'])
+            appointment_closed = True
+
+        # ── 3. Close the linked consultation ──────────────────
+        consultation_closed = False
+        consultation = None
+        if conversation.consultation_id:
+            consultation = conversation.consultation
+        else:
+            consultation = (
+                Consultation.objects
+                .filter(
+                    patient_profile=conversation.patient_profile,
+                    doctor_profile=conversation.doctor_profile,
+                    status='ongoing',
+                )
+                .order_by('-created_at')
+                .first()
+            )
+
+        if consultation and consultation.status == 'ongoing':
+            consultation.status = 'completed'
+            consultation.save(update_fields=['status', 'updated_at'])
+            consultation_closed = True
+
+        return Response({
+            'status': 'success',
+            'message': 'Conversation ended',
+            'data': {
+                'conversation_id': conversation.conversation_id,
+                'conversation_ended_at': conversation.ended_at,
+                'appointment_id': appointment.id if appointment else None,
+                'appointment_closed': appointment_closed,
+                'consultation_id': consultation.id if consultation else None,
+                'consultation_closed': consultation_closed,
+            },
+        })
 # ============================================
 # ChatSyncLog ViewSet
 # ============================================

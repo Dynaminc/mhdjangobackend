@@ -97,15 +97,29 @@ class AppointmentSerializer(serializers.ModelSerializer):
         return obj.patient_profile.profile.user.get_full_name()
     
     def get_doctor_name(self, obj):
-        if obj.doctor_profile:
-            return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
-        return "Unassigned"
+        if not obj.doctor_profile_id:
+            return None
+        user = obj.doctor_profile.profile.user
+        return f"Dr. {user.get_full_name() or user.email}"
 
+ACTIVE_STATUSES = ('scheduled', 'confirmed', 'in_progress')
+
+# apps/appointments/serializers.py
+from rest_framework import serializers
+from django.utils import timezone
+
+from .models import Appointment
+
+
+ACTIVE_STATUSES = ('scheduled', 'confirmed', 'in_progress')
+INSTANT_MARKERS = ('instant', 'instant consultation', 'walk-in', 'walk in')
+# apps/appointments/serializers.py
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
+            'id',     
             'patient_profile',
             'clinic',
             'appointment_date',
@@ -118,76 +132,207 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             'doctor_profile': {'required': False, 'allow_null': True},
-            # ✅ Remove read_only from patient_profile so frontend can send it
             'patient_profile': {'required': True},
         }
 
     def validate(self, data):
+        from django.db.models import Q
+
         clinic = data.get('clinic')
         doctor_profile = data.get('doctor_profile')
         appointment_date = data.get('appointment_date')
         start_time = data.get('start_time')
         end_time = data.get('end_time')
+        patient_profile = data.get('patient_profile')
+        appointment_type = data.get('type', 'physical')
+        new_notes = data.get('notes') or ''
+        new_reason = (data.get('reason') or '').lower()
 
-        # Validate date/time
-        if appointment_date and start_time and end_time:
+        def _is_instant_note(note: str) -> bool:
+            return bool(note) and 'instant consultation' in note.lower()
+
+        new_is_instant_virtual = (
+            appointment_type == 'virtual'
+            and (_is_instant_note(new_notes) or 'instant' in new_reason)
+        )
+
+        # ─────────────────────────────────────────────
+        # 1. Time sanity — skipped for instant (can span midnight)
+        # ─────────────────────────────────────────────
+        if (
+            not new_is_instant_virtual
+            and appointment_date
+            and start_time
+            and end_time
+        ):
             if start_time >= end_time:
                 raise serializers.ValidationError({
                     'end_time': 'End time must be after start time'
                 })
 
-        # Check if clinic requires doctor selection
+        # ─────────────────────────────────────────────
+        # 2. Doctor belongs to clinic
+        # ─────────────────────────────────────────────
         if clinic and clinic.requires_doctor_selection:
             if not doctor_profile:
                 raise serializers.ValidationError({
                     'doctor_profile': 'This clinic requires you to select a doctor'
                 })
-
-            # Verify doctor belongs to this clinic
-            if doctor_profile and doctor_profile not in clinic.doctors.all():
+            if doctor_profile not in clinic.doctors.all():
                 raise serializers.ValidationError({
                     'doctor_profile': 'Selected doctor does not work at this clinic'
                 })
         else:
-            # If doctor is provided but doesn't belong to clinic, raise error
-            if doctor_profile and clinic and doctor_profile not in clinic.doctors.all():
+            if (
+                doctor_profile
+                and clinic
+                and doctor_profile not in clinic.doctors.all()
+            ):
                 raise serializers.ValidationError({
                     'doctor_profile': 'Selected doctor does not work at this clinic'
                 })
 
-        # Check for conflicting appointments
-        if doctor_profile and appointment_date and start_time and end_time:
+        # ─────────────────────────────────────────────
+        # 3. Doctor overlap — skipped for instant
+        # ─────────────────────────────────────────────
+        if (
+            not new_is_instant_virtual
+            and doctor_profile
+            and appointment_date
+            and start_time
+            and end_time
+        ):
             conflicting = Appointment.objects.filter(
                 doctor_profile=doctor_profile,
                 appointment_date=appointment_date,
                 start_time__lt=end_time,
                 end_time__gt=start_time,
-                status__in=['scheduled', 'confirmed', 'in_progress']
+                status__in=ACTIVE_STATUSES,
             )
             if self.instance:
                 conflicting = conflicting.exclude(id=self.instance.id)
+
+            conflicting = conflicting.exclude(
+                Q(consultation__status='completed')
+                | Q(consultation__status='cancelled')
+            )
 
             if conflicting.exists():
                 raise serializers.ValidationError({
                     'appointment_date': 'Doctor already has an appointment at this time'
                 })
 
+        # ─────────────────────────────────────────────
+        # 4. Duplicate open appointment of the same category
+        # ─────────────────────────────────────────────
+        if patient_profile and appointment_date:
+
+            # ── Step A: If creating a NEW INSTANT VIRTUAL,
+            #    auto-close every other scheduled instant-virtual
+            #    for this patient on this date. Doesn't rely on
+            #    consultation status — instant means "one at a time".
+            if new_is_instant_virtual:
+                others = Appointment.objects.filter(
+                    patient_profile=patient_profile,
+                    appointment_date=appointment_date,
+                    type='virtual',
+                    status__in=['scheduled', 'confirmed', 'in_progress'],
+                )
+                if self.instance:
+                    others = others.exclude(id=self.instance.id)
+
+                instant_ids = [
+                    a.id for a in others
+                    if _is_instant_note(a.notes or '')
+                ]
+                if instant_ids:
+                    Appointment.objects.filter(id__in=instant_ids).update(
+                        status='completed'
+                    )
+
+            # ── Step A2: Also close any stale appointment whose
+            #    consultation is finished (for non-instant categories)
+            stale = Appointment.objects.filter(
+                patient_profile=patient_profile,
+                status__in=ACTIVE_STATUSES,
+            ).filter(
+                Q(consultation__status='completed')
+                | Q(consultation__status='cancelled')
+            )
+            if self.instance:
+                stale = stale.exclude(id=self.instance.id)
+            stale.update(status='completed')
+
+            # ── Step B: Re-query — closed rows are now filtered out
+            duplicate_qs = Appointment.objects.filter(
+                patient_profile=patient_profile,
+                appointment_date=appointment_date,
+                status__in=ACTIVE_STATUSES,
+            )
+            if self.instance:
+                duplicate_qs = duplicate_qs.exclude(id=self.instance.id)
+
+            new_is_scheduled_virtual = (
+                appointment_type == 'virtual' and not new_is_instant_virtual
+            )
+            new_is_physical = appointment_type == 'physical'
+
+            # ── Step C: Look for a same-category live conflict
+            conflict = None
+            for existing in duplicate_qs:
+                ex_notes = existing.notes or ''
+                ex_is_instant_virtual = (
+                    existing.type == 'virtual' and _is_instant_note(ex_notes)
+                )
+                ex_is_scheduled_virtual = (
+                    existing.type == 'virtual' and not ex_is_instant_virtual
+                )
+                ex_is_physical = existing.type == 'physical'
+
+                same_category = (
+                    (new_is_physical and ex_is_physical)
+                    or (new_is_instant_virtual and ex_is_instant_virtual)
+                    or (new_is_scheduled_virtual and ex_is_scheduled_virtual)
+                )
+                if same_category:
+                    conflict = existing
+                    break
+
+            if conflict:
+                if new_is_physical:
+                    category_label = 'physical'
+                elif new_is_instant_virtual:
+                    category_label = 'instant virtual'
+                else:
+                    category_label = 'scheduled virtual'
+
+                raise serializers.ValidationError({
+                    'detail': (
+                        f"This patient already has an open {category_label} "
+                        f"appointment on {appointment_date} "
+                        f"(#{conflict.id}, status: {conflict.status}). "
+                        f"Close, complete, or cancel it before creating another."
+                    ),
+                    'existing_appointment_id': conflict.id,
+                    'existing_status': conflict.status,
+                    'existing_category': category_label,
+                })
+
         return data
 
     def create(self, validated_data):
-        """Create appointment with optional doctor assignment"""
+        from django.utils import timezone
         from .utils import auto_assign_doctor
+        from consultations.models import Consultation
 
         patient_profile = validated_data.get('patient_profile')
         clinic = validated_data.get('clinic')
         doctor_profile = validated_data.get('doctor_profile', None)
 
-        # If no doctor assigned and clinic allows auto-assignment
+        # Auto-assign only when a clinic exists
         if not doctor_profile and clinic and not clinic.requires_doctor_selection:
-            # Auto-assign the first available doctor
             doctor_profile = auto_assign_doctor(clinic, validated_data)
 
-        # Create appointment
         appointment = Appointment.objects.create(
             patient_profile=patient_profile,
             clinic=clinic,
@@ -198,16 +343,307 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             type=validated_data.get('type', 'physical'),
             reason=validated_data.get('reason', ''),
             notes=validated_data.get('notes', ''),
-            status='scheduled'
+            status='scheduled',
         )
 
-        # If doctor was auto-assigned, log it
         if doctor_profile and not validated_data.get('doctor_profile'):
             appointment.doctor_assigned_at = timezone.now()
-            appointment.save()
+            appointment.save(update_fields=['doctor_assigned_at'])
+
+        # ✅ Always create a consultation — doctor may be null for instant
+        if not hasattr(appointment, 'consultation'):
+            Consultation.objects.create(
+                appointment=appointment,
+                patient_profile=patient_profile,
+                doctor_profile=doctor_profile,   # may be None
+                type=appointment.type,
+                clinic_location=clinic.name if clinic else '',
+                status='ongoing',
+            )
 
         return appointment
+    # def create(self, validated_data):
+    #     from django.utils import timezone
+    #     from .utils import auto_assign_doctor
+    #     from consultations.models import Consultation
 
+    #     patient_profile = validated_data.get('patient_profile')
+    #     clinic = validated_data.get('clinic')
+    #     doctor_profile = validated_data.get('doctor_profile', None)
+
+    #     if not doctor_profile and clinic and not clinic.requires_doctor_selection:
+    #         doctor_profile = auto_assign_doctor(clinic, validated_data)
+
+    #     appointment = Appointment.objects.create(
+    #         patient_profile=patient_profile,
+    #         clinic=clinic,
+    #         doctor_profile=doctor_profile,
+    #         appointment_date=validated_data.get('appointment_date'),
+    #         start_time=validated_data.get('start_time'),
+    #         end_time=validated_data.get('end_time'),
+    #         type=validated_data.get('type', 'physical'),
+    #         reason=validated_data.get('reason', ''),
+    #         notes=validated_data.get('notes', ''),
+    #         status='scheduled',
+    #     )
+
+    #     if doctor_profile and not validated_data.get('doctor_profile'):
+    #         appointment.doctor_assigned_at = timezone.now()
+    #         appointment.save(update_fields=['doctor_assigned_at'])
+
+    #     # ✅ Auto-create the consultation when a doctor is assigned
+    #     if doctor_profile and not hasattr(appointment, 'consultation'):
+    #         Consultation.objects.create(
+    #             appointment=appointment,
+    #             patient_profile=patient_profile,
+    #             doctor_profile=doctor_profile,
+    #             type=appointment.type,
+    #             clinic_location=clinic.name if clinic else '',
+    #             status='ongoing',
+    #         )
+
+    #     return appointment
+    
+    
+# class AppointmentCreateSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Appointment
+#         fields = [
+#             'patient_profile',
+#             'clinic',
+#             'appointment_date',
+#             'start_time',
+#             'end_time',
+#             'type',
+#             'reason',
+#             'notes',
+#             'doctor_profile',
+#         ]
+#         extra_kwargs = {
+#             'doctor_profile': {'required': False, 'allow_null': True},
+#             'patient_profile': {'required': True},
+#         }
+
+
+#     def _is_instant(self, data):
+#         """Instant consultations are identified by their reason (case-insensitive)."""
+#         reason = (data.get('reason') or '').strip().lower()
+#         return any(marker in reason for marker in INSTANT_MARKERS)
+
+#     def validate(self, data):
+#         from django.db.models import Q
+
+#         clinic = data.get('clinic')
+#         doctor_profile = data.get('doctor_profile')
+#         appointment_date = data.get('appointment_date')
+#         start_time = data.get('start_time')
+#         end_time = data.get('end_time')
+#         patient_profile = data.get('patient_profile')
+#         appointment_type = data.get('type', 'physical')
+#         new_notes = data.get('notes') or ''
+#         new_reason = (data.get('reason') or '').lower()
+
+#         def _is_instant_note(note: str) -> bool:
+#             return bool(note) and 'instant consultation' in note.lower()
+
+#         new_is_instant_virtual = (
+#             appointment_type == 'virtual'
+#             and (_is_instant_note(new_notes) or 'instant' in new_reason)
+#         )
+
+#         # ─────────────────────────────────────────────
+#         # 1. Time sanity — skipped for instant (can span midnight)
+#         # ─────────────────────────────────────────────
+#         if (
+#             not new_is_instant_virtual
+#             and appointment_date
+#             and start_time
+#             and end_time
+#         ):
+#             if start_time >= end_time:
+#                 raise serializers.ValidationError({
+#                     'end_time': 'End time must be after start time'
+#                 })
+
+#         # ─────────────────────────────────────────────
+#         # 2. Doctor belongs to clinic
+#         # ─────────────────────────────────────────────
+#         if clinic and clinic.requires_doctor_selection:
+#             if not doctor_profile:
+#                 raise serializers.ValidationError({
+#                     'doctor_profile': 'This clinic requires you to select a doctor'
+#                 })
+#             if doctor_profile not in clinic.doctors.all():
+#                 raise serializers.ValidationError({
+#                     'doctor_profile': 'Selected doctor does not work at this clinic'
+#                 })
+#         else:
+#             if (
+#                 doctor_profile
+#                 and clinic
+#                 and doctor_profile not in clinic.doctors.all()
+#             ):
+#                 raise serializers.ValidationError({
+#                     'doctor_profile': 'Selected doctor does not work at this clinic'
+#                 })
+
+#         # ─────────────────────────────────────────────
+#         # 3. Doctor overlap — skipped for instant
+#         # ─────────────────────────────────────────────
+#         if (
+#             not new_is_instant_virtual
+#             and doctor_profile
+#             and appointment_date
+#             and start_time
+#             and end_time
+#         ):
+#             conflicting = Appointment.objects.filter(
+#                 doctor_profile=doctor_profile,
+#                 appointment_date=appointment_date,
+#                 start_time__lt=end_time,
+#                 end_time__gt=start_time,
+#                 status__in=ACTIVE_STATUSES,
+#             )
+#             if self.instance:
+#                 conflicting = conflicting.exclude(id=self.instance.id)
+
+#             conflicting = conflicting.exclude(
+#                 Q(consultation__status='completed')
+#                 | Q(consultation__status='cancelled')
+#             )
+
+#             if conflicting.exists():
+#                 raise serializers.ValidationError({
+#                     'appointment_date': 'Doctor already has an appointment at this time'
+#                 })
+
+#         # ─────────────────────────────────────────────
+#         # 4. Duplicate open appointment of the same category
+#         # ─────────────────────────────────────────────
+#         if patient_profile and appointment_date:
+
+#             # ── Step A: If creating a NEW INSTANT VIRTUAL,
+#             #    auto-close every other scheduled instant-virtual
+#             #    for this patient on this date. Doesn't rely on
+#             #    consultation status — instant means "one at a time".
+#             if new_is_instant_virtual:
+#                 others = Appointment.objects.filter(
+#                     patient_profile=patient_profile,
+#                     appointment_date=appointment_date,
+#                     type='virtual',
+#                     status__in=['scheduled', 'confirmed', 'in_progress'],
+#                 )
+#                 if self.instance:
+#                     others = others.exclude(id=self.instance.id)
+
+#                 instant_ids = [
+#                     a.id for a in others
+#                     if _is_instant_note(a.notes or '')
+#                 ]
+#                 if instant_ids:
+#                     Appointment.objects.filter(id__in=instant_ids).update(
+#                         status='completed'
+#                     )
+
+#             # ── Step A2: Also close any stale appointment whose
+#             #    consultation is finished (for non-instant categories)
+#             stale = Appointment.objects.filter(
+#                 patient_profile=patient_profile,
+#                 status__in=ACTIVE_STATUSES,
+#             ).filter(
+#                 Q(consultation__status='completed')
+#                 | Q(consultation__status='cancelled')
+#             )
+#             if self.instance:
+#                 stale = stale.exclude(id=self.instance.id)
+#             stale.update(status='completed')
+
+#             # ── Step B: Re-query — closed rows are now filtered out
+#             duplicate_qs = Appointment.objects.filter(
+#                 patient_profile=patient_profile,
+#                 appointment_date=appointment_date,
+#                 status__in=ACTIVE_STATUSES,
+#             )
+#             if self.instance:
+#                 duplicate_qs = duplicate_qs.exclude(id=self.instance.id)
+
+#             new_is_scheduled_virtual = (
+#                 appointment_type == 'virtual' and not new_is_instant_virtual
+#             )
+#             new_is_physical = appointment_type == 'physical'
+
+#             # ── Step C: Look for a same-category live conflict
+#             conflict = None
+#             for existing in duplicate_qs:
+#                 ex_notes = existing.notes or ''
+#                 ex_is_instant_virtual = (
+#                     existing.type == 'virtual' and _is_instant_note(ex_notes)
+#                 )
+#                 ex_is_scheduled_virtual = (
+#                     existing.type == 'virtual' and not ex_is_instant_virtual
+#                 )
+#                 ex_is_physical = existing.type == 'physical'
+
+#                 same_category = (
+#                     (new_is_physical and ex_is_physical)
+#                     or (new_is_instant_virtual and ex_is_instant_virtual)
+#                     or (new_is_scheduled_virtual and ex_is_scheduled_virtual)
+#                 )
+#                 if same_category:
+#                     conflict = existing
+#                     break
+
+#             if conflict:
+#                 if new_is_physical:
+#                     category_label = 'physical'
+#                 elif new_is_instant_virtual:
+#                     category_label = 'instant virtual'
+#                 else:
+#                     category_label = 'scheduled virtual'
+
+#                 raise serializers.ValidationError({
+#                     'detail': (
+#                         f"This patient already has an open {category_label} "
+#                         f"appointment on {appointment_date} "
+#                         f"(#{conflict.id}, status: {conflict.status}). "
+#                         f"Close, complete, or cancel it before creating another."
+#                     ),
+#                     'existing_appointment_id': conflict.id,
+#                     'existing_status': conflict.status,
+#                     'existing_category': category_label,
+#                 })
+
+#         return data
+
+#     def create(self, validated_data):
+#         from .utils import auto_assign_doctor
+
+#         patient_profile = validated_data.get('patient_profile')
+#         clinic = validated_data.get('clinic')
+#         doctor_profile = validated_data.get('doctor_profile', None)
+
+#         if not doctor_profile and clinic and not clinic.requires_doctor_selection:
+#             doctor_profile = auto_assign_doctor(clinic, validated_data)
+
+#         appointment = Appointment.objects.create(
+#             patient_profile=patient_profile,
+#             clinic=clinic,
+#             doctor_profile=doctor_profile,
+#             appointment_date=validated_data.get('appointment_date'),
+#             start_time=validated_data.get('start_time'),
+#             end_time=validated_data.get('end_time'),
+#             type=validated_data.get('type', 'physical'),
+#             reason=validated_data.get('reason', ''),
+#             notes=validated_data.get('notes', ''),
+#             status='scheduled',
+#         )
+
+#         if doctor_profile and not validated_data.get('doctor_profile'):
+#             appointment.doctor_assigned_at = timezone.now()
+#             appointment.save()
+
+#         return appointment
+    
 
 # utils.py
 def auto_assign_doctor(clinic, appointment_data):

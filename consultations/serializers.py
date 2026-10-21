@@ -34,68 +34,166 @@ class ExaminationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ('id', 'created_at', 'updated_at', 'bmi', 'is_vital_sign')
 
+# apps/consultations/serializers.py
+from rest_framework import serializers
+from .models import Consultation
+from appointments.serializers import AppointmentSerializer
+
+
+# class ConsultationSerializer(serializers.ModelSerializer):
+#     type_display = serializers.CharField(source='get_type_display', read_only=True)
+#     status_display = serializers.CharField(source='get_status_display', read_only=True)
+#     patient_name = serializers.SerializerMethodField()
+#     doctor_name = serializers.SerializerMethodField()
+#     appointment_details = AppointmentSerializer(source='appointment', read_only=True)
+#     is_doctor_assigned = serializers.BooleanField(read_only=True)
+
+#     # ── Nested: prescriptions + labs tied to this consultation ──
+#     prescriptions = serializers.SerializerMethodField()
+#     lab_orders = serializers.SerializerMethodField()
+
+#     appointment_id = serializers.PrimaryKeyRelatedField(
+#         source='appointment',
+#         queryset=Appointment.objects.all(),
+#         write_only=True,
+#         required=False,
+#     )
+#     patient_profile_id = serializers.PrimaryKeyRelatedField(
+#         source='patient_profile',
+#         queryset=PatientProfile.objects.all(),
+#         write_only=True,
+#         required=False,
+#     )
+#     doctor_profile_id = serializers.PrimaryKeyRelatedField(
+#         source='doctor_profile',
+#         queryset=DoctorProfile.objects.all(),
+#         write_only=True,
+#         required=False,
+#     )
+
+#     def get_doctor_name(self, obj):
+#         if not obj.doctor_profile_id:
+#             return None
+#         user = obj.doctor_profile.profile.user
+#         return f"Dr. {user.get_full_name() or user.email}"
+
+#     class Meta:
+#         model = Consultation
+#         fields = [
+#             'id', 'appointment', 'appointment_details',
+#             'patient_profile', 'patient_name',
+#             'doctor_profile', 'doctor_name', 'is_doctor_assigned',
+#             'hpc', 'symptoms', 'duration', 'vitals', 'examinations',
+#             'assessment', 'plan',
+#             'type', 'type_display', 'status', 'status_display',
+#             'clinic_location', 'chat_conversation_id',
+#             'prescriptions', 'lab_orders',
+#             'created_at', 'updated_at',
+#         ]
+
+#         read_only_fields = ('id', 'created_at', 'updated_at', 'chat_conversation_id')
+
+#     # ── Computed fields ─────────────────────────────────────
+#     def get_patient_name(self, obj):
+#         return obj.patient_profile.profile.user.get_full_name()
+
+#     def get_doctor_name(self, obj):
+#         return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
+
+#     def get_prescriptions(self, obj):
+#         # Only fetch for detail views (retrieve/list on the frontend's EMR)
+#         # If you want it on ALL list rows, drop the check below.
+#         if not self.context.get('include_related', True):
+#             return []
+
+#         from prescriptions.serializers import PrescriptionSerializer
+#         qs = obj.prescriptions.all().order_by('created_at')
+#         return PrescriptionSerializer(qs, many=True, context=self.context).data
+
+#     def get_lab_orders(self, obj):
+#         if not self.context.get('include_related', True):
+#             return []
+
+#         from labs.serializers import LabTestOrderSerializer
+#         qs = obj.lab_orders.all().order_by('created_at')
+#         return LabTestOrderSerializer(qs, many=True, context=self.context).data
+
+#     def create(self, validated_data):
+#         if 'appointment' in validated_data:
+#             appointment = validated_data.pop('appointment')
+#             consultation = create_consultation_from_appointment(appointment)
+#             for key, value in validated_data.items():
+#                 setattr(consultation, key, value)
+#             consultation.save()
+#             return consultation
+#         return super().create(validated_data)
+
+# apps/consultations/serializers.py
 
 class ConsultationSerializer(serializers.ModelSerializer):
-    """Serializer for the Consultation model"""
-    
-    type_display = serializers.CharField(source='get_type_display', read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    """Read serializer for Consultation."""
+
+    type_display = serializers.CharField(
+        source='get_type_display', read_only=True
+    )
+    status_display = serializers.CharField(
+        source='get_status_display', read_only=True
+    )
     patient_name = serializers.SerializerMethodField()
     doctor_name = serializers.SerializerMethodField()
-    appointment_details = AppointmentSerializer(source='appointment', read_only=True)
-    examinations = ExaminationSerializer(many=True, read_only=True)
-    
-    # For create/update operations
-    appointment_id = serializers.PrimaryKeyRelatedField(
-        source='appointment',
-        queryset=Appointment.objects.all(),
-        write_only=True,
-        required=False
+    appointment_details = AppointmentSerializer(
+        source='appointment', read_only=True
     )
-    patient_profile_id = serializers.PrimaryKeyRelatedField(
-        source='patient_profile',
-        queryset=PatientProfile.objects.all(),
-        write_only=True,
-        required=False
-    )
-    doctor_profile_id = serializers.PrimaryKeyRelatedField(
-        source='doctor_profile',
-        queryset=DoctorProfile.objects.all(),
-        write_only=True,
-        required=False
-    )
-    
+
+    # ✅ Nested data for the EMR
+    prescriptions = serializers.SerializerMethodField()
+    lab_orders = serializers.SerializerMethodField()
+
     class Meta:
         model = Consultation
         fields = [
-            'id', 'appointment', 'appointment_id', 'appointment_details',
-            'patient_profile', 'patient_profile_id', 'patient_name',
-            'doctor_profile', 'doctor_profile_id', 'doctor_name',
-            'hpc', 'symptoms', 'duration', 'vitals', 'assessment', 'plan',
-            'type', 'type_display', 'status', 'status_display',
+            'id',
+            'appointment', 'appointment_details',
+            'patient_profile', 'patient_name',
+            'doctor_profile', 'doctor_name',
+            'hpc', 'symptoms', 'duration', 'vitals', 'examinations',
+            'assessment', 'plan',
+            'type', 'type_display',
+            'status', 'status_display',
             'clinic_location', 'chat_conversation_id',
-            'examinations', 'created_at', 'updated_at'
+            'prescriptions', 'lab_orders',
+            'created_at', 'updated_at',
         ]
-        read_only_fields = ('id', 'created_at', 'updated_at', 'chat_conversation_id')
-    
-    def get_patient_name(self, obj):
-        return obj.patient_profile.profile.user.get_full_name()
-    
-    def get_doctor_name(self, obj):
-        return f"Dr. {obj.doctor_profile.profile.user.get_full_name()}"
-    
-    def create(self, validated_data):
-        # If appointment_id is provided, use it to create consultation
-        if 'appointment' in validated_data:
-            appointment = validated_data.pop('appointment')
-            consultation = create_consultation_from_appointment(appointment)
-            # Update with any additional data
-            for key, value in validated_data.items():
-                setattr(consultation, key, value)
-            consultation.save()
-            return consultation
-        return super().create(validated_data)
+        read_only_fields = (
+            'id', 'created_at', 'updated_at', 'chat_conversation_id',
+        )
 
+    def get_patient_name(self, obj):
+        if not obj.patient_profile_id:
+            return None
+        user = obj.patient_profile.profile.user
+        return user.get_full_name() or user.email
+
+    def get_doctor_name(self, obj):
+        # ✅ doctor may be None for instant consultations pre-admission
+        if not obj.doctor_profile_id:
+            return None
+        user = obj.doctor_profile.profile.user
+        return f"Dr. {user.get_full_name() or user.email}"
+
+    def get_prescriptions(self, obj):
+        if not self.context.get('include_related', True):
+            return []
+        from prescriptions.serializers import PrescriptionSerializer
+        qs = obj.prescriptions.all().order_by('created_at')
+        return PrescriptionSerializer(qs, many=True, context=self.context).data
+
+    def get_lab_orders(self, obj):
+        if not self.context.get('include_related', True):
+            return []
+        from labs.serializers import LabTestOrderSerializer
+        qs = obj.lab_orders.all().order_by('created_at')
+        return LabTestOrderSerializer(qs, many=True, context=self.context).data
 
 # apps/consultations/serializers.py
 from rest_framework import serializers
@@ -116,6 +214,7 @@ class ConsultationCreateSerializer(serializers.Serializer):
     symptoms = serializers.CharField(required=False, allow_blank=True)
     duration = serializers.CharField(required=False, allow_blank=True)
     vitals = serializers.CharField(required=False, allow_blank=True)
+    examinations = serializers.CharField(required=False, allow_blank=True)  # ← ADD
     assessment = serializers.CharField(required=False, allow_blank=True)
     plan = serializers.CharField(required=False, allow_blank=True)
 
@@ -135,9 +234,7 @@ class ConsultationCreateSerializer(serializers.Serializer):
         validated_data.pop('appointment_id', None)
         validated_data.pop('doctor_id', None)
 
-        # ─────────────────────────────────────────────────────
         # 1. Resolve Profile → PatientProfile (auto-create)
-        # ─────────────────────────────────────────────────────
         try:
             profile = Profile.objects.get(mh_user_id=mh_user_id)
         except Profile.DoesNotExist:
@@ -149,18 +246,14 @@ class ConsultationCreateSerializer(serializers.Serializer):
         if patient_profile is None:
             patient_profile = PatientProfile.objects.create(profile=profile)
 
-        # ─────────────────────────────────────────────────────
         # 2. Resolve doctor from request.user
-        # ─────────────────────────────────────────────────────
         doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
         if not doctor_profile:
             raise serializers.ValidationError(
                 {"detail": "No doctor attached to your account."}
             )
 
-        # ─────────────────────────────────────────────────────
-        # 3. ✅ Reuse an existing ongoing consultation if present
-        # ─────────────────────────────────────────────────────
+        # 3. Reuse an existing ongoing consultation if present
         existing = Consultation.objects.filter(
             patient_profile=patient_profile,
             doctor_profile=doctor_profile,
@@ -168,75 +261,29 @@ class ConsultationCreateSerializer(serializers.Serializer):
         ).order_by('-created_at').first()
 
         if existing:
-            # Optionally update the passed-in fields (so re-submits refresh the record)
-            for field in ['hpc', 'symptoms', 'duration', 'vitals',
-                        'assessment', 'plan', 'type', 'clinic_location']:
+            for field in [
+                'hpc',
+                'symptoms',
+                'duration',
+                'vitals',
+                'examinations',        # ← ADD
+                'assessment',
+                'plan',
+                'type',
+                'clinic_location',
+            ]:
                 if field in validated_data:
                     setattr(existing, field, validated_data[field])
             existing.save()
             return existing
 
-        # ─────────────────────────────────────────────────────
         # 4. Otherwise create a fresh consultation
-        # ─────────────────────────────────────────────────────
         return Consultation.objects.create(
             patient_profile=patient_profile,
             doctor_profile=doctor_profile,
             status='ongoing',
             **validated_data,
         )
-    
-
-    # def create(self, validated_data):
-    #     request = self.context['request']
-    #     mh_user_id = validated_data.pop('mh_user_id')
-    #     doctor_id = validated_data.pop('doctor_id', None)
-
-    #     # ✅ Ignore any patient_profile the client sent
-    #     validated_data.pop('patient_profile', None)
-    #     validated_data.pop('doctor_profile', None)
-    #     validated_data.pop('appointment', None)
-    #     validated_data.pop('appointment_id', None)
-    #     validated_data.pop('doctor_id', None)
-
-    #     # 1. Resolve Profile → PatientProfile (auto-create if missing)
-    #     # try:
-    #     profile = Profile.objects.get(mh_user_id=mh_user_id)
-    #     # except Profile.DoesNotExist:
-    #     #     raise serializers.ValidationError(
-    #     #         {"mh_user_id": f"Profile '{mh_user_id}' not found"}
-    #     #     )
-
-    #     patient_profile = getattr(profile, 'patient_profile', None)
-    #     if patient_profile is None:
-    #         patient_profile = PatientProfile.objects.create(profile=profile)
-
-    #     # # 2. Resolve doctor
-    #     # doctor_id = request.user.profile.doctor_profile
-    #     # if doctor_id:
-    #     #     try:
-    #     #         doctor_profile = DoctorProfile.objects.get(id=doctor_id)
-    #     #     except DoctorProfile.DoesNotExist:
-    #     #         raise serializers.ValidationError(
-    #     #             {"doctor_id": f"Doctor {doctor_id} not found"}
-    #     #         )
-    #     # else:
-    #         # Fall back to the logged-in doctor
-    #     doctor_profile = getattr(request.user.profile, 'doctor_profile', None)
-    #     if not doctor_profile:
-    #         raise serializers.ValidationError(
-    #             {"detail": "doctor_id is required (no doctor attached to your account)"}
-    #         )
-
-    #     # 3. Create consultation
-    #     print('hererere')
-    #     return Consultation.objects.create(
-    #         patient_profile=patient_profile,
-    #         doctor_profile=doctor_profile,
-    #         status='ongoing',
-    #         **validated_data,
-    #     )
-        
         
 
 class ConsultationCompleteSerializer(serializers.Serializer):

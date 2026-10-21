@@ -9,6 +9,10 @@ from consultations.models import Consultation
 from .serializers import  *
 import requests
 from django.conf import settings
+from django.db.models import Value
+from django.db.models.functions import Length, Coalesce
+
+
 
 class CompleteConsultationView(APIView):
     """Complete a consultation and archive the chat"""
@@ -101,7 +105,7 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
 
         # ✅ Only return consultations that actually have HPC content
-        qs = qs.annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10)
+        # qs = qs.annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10)
 
         user = self.request.user
         if not hasattr(user, 'profile'):
@@ -140,6 +144,41 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     # =====================================================
     # HELPER — mh_user_id → PatientProfile (auto-create)
     # =====================================================
+    def _purge_junk_ongoing(self, patient_profile, keep_id=None):
+        """
+        Ensure at most ONE 'ongoing' consultation remains — but only clean up
+        when there is actually a duplicate to remove.
+
+        • 0 or 1 ongoing → do nothing. A single ongoing with empty HPC is
+        legitimate (fresh admit, consultation not yet started).
+        • More than 1 ongoing → keep the latest (or `keep_id` if provided),
+        delete the rest.
+        """
+        ongoing = list(
+            patient_profile.consultations
+            .filter(status='ongoing')
+            .order_by('-created_at')
+        )
+
+        if len(ongoing) <= 1:
+            print(
+                f"[purge] patient_profile={patient_profile.id} "
+                f"ongoing={len(ongoing)} → nothing to do"
+            )
+            return []
+
+        keeper_id = keep_id or ongoing[0].id          # latest by created_at
+        to_delete = [c.id for c in ongoing if c.id != keeper_id]
+
+        if to_delete:
+            Consultation.objects.filter(id__in=to_delete).delete()
+
+        print(
+            f"[purge] patient_profile={patient_profile.id} "
+            f"found={len(ongoing)} kept={keeper_id} deleted={to_delete}"
+        )
+        return to_delete
+
     def _resolve_patient_profile(self, mh_user_id):
         try:
             profile = Profile.objects.get(mh_user_id=mh_user_id)
@@ -226,17 +265,19 @@ class ConsultationViewSet(viewsets.ModelViewSet):
 
         patient_profile, error = self._resolve_patient_profile(mh_user_id)
         if error:
-            return Response(
-                {'status': 'error', 'message': error},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        
+            return Response({'status': 'error', 'message': error},
+                            status=status.HTTP_404_NOT_FOUND)
 
-        consultations = Consultation.objects.filter(
-            patient_profile=patient_profile
-        ).annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10).order_by('-created_at')
+        # 🔥 kill the phantom "ongoing but empty" rows FIRST
+        self._purge_junk_ongoing(patient_profile)
+
+        consultations = (
+            Consultation.objects
+            .filter(patient_profile=patient_profile)
+            .order_by('-created_at')
+        )
+
         serializer = ConsultationSerializer(consultations, many=True)
-
         return Response({
             'status': 'success',
             'mh_user_id': mh_user_id,
@@ -286,11 +327,7 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         if error:
             return Response({'error': error}, status=status.HTTP_404_NOT_FOUND)
 
-        qs = patient_profile.consultations.filter(status='ongoing')
-        if consultation_id:
-            qs = qs.filter(id=consultation_id)
-        consultation = qs.order_by('-created_at').first()
-
+        consultation = self._purge_stale_ongoing(patient_profile, consultation_id)
         if not consultation:
             return Response(
                 {'error': 'No ongoing consultation found for this patient'},

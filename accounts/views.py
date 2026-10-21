@@ -991,7 +991,67 @@ class ProfileViewSet(viewsets.ModelViewSet):
             'data': serializer.data
         })
 
+    @swagger_auto_schema(
+        operation_description="Get a profile by mh_user_id",
+        manual_parameters=[
+            openapi.Parameter(
+                'mh_user_id', openapi.IN_QUERY,
+                description="User's mh_user_id (e.g. MH-2026-1358F4D6)",
+                type=openapi.TYPE_STRING, required=True,
+            )
+        ],
+        responses={200: UserProfileSerializer()},
+    )
     
+    @action(detail=False, methods=['get'], url_path='by-mh-user-id')
+    def get_by_mh_user_id(self, request):
+        mh_user_id = request.query_params.get('mh_user_id')
+
+        if not mh_user_id:
+            return Response(
+                {'status': 'error', 'message': 'mh_user_id is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            profile = Profile.objects.select_related('user').get(mh_user_id=mh_user_id)
+        except Profile.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': f"Profile '{mh_user_id}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Access rule: staff / doctor / the owner can view
+        user = request.user
+        is_staff = user.is_staff
+        is_doctor = getattr(getattr(user, 'profile', None), 'role', None) == 'doctor'
+        is_owner = profile.user_id == user.id
+
+        if not (is_staff or is_doctor or is_owner):
+            return Response(
+                {'status': 'error', 'message': 'You cannot view this profile'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        data = UserProfileSerializer(profile).data
+
+        # Optional: attach the role-specific profile so the frontend has everything
+        patient_profile = getattr(profile, 'patient_profile', None)
+        if patient_profile is not None:
+            from .serializers import PatientProfileSerializer
+            data['patient_profile'] = PatientProfileSerializer(patient_profile).data
+
+        doctor_profile = getattr(profile, 'doctor_profile', None)
+        if doctor_profile is not None:
+            from .serializers import DoctorProfileSerializer
+            data['doctor_profile'] = DoctorProfileSerializer(doctor_profile).data
+
+        return Response({
+            'status': 'success',
+            'mh_user_id': mh_user_id,
+            'data': data,
+        })
+            
     @action(detail=False, methods=['get'], url_path='patients')
     def get_patients(self, request):
         # from .queue_service import queue

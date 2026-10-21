@@ -93,6 +93,7 @@ class Appointment(BaseModel):
     """Appointment booking"""
     
     STATUS_CHOICES = (
+        ('awaiting', 'Awaiting Approval'),
         ('scheduled', 'Scheduled'),
         ('confirmed', 'Confirmed'),
         ('in_progress', 'In Progress'),
@@ -128,7 +129,7 @@ class Appointment(BaseModel):
         on_delete=models.CASCADE,
         related_name='appointments',
         null=True,  # Allow NULL for first-available pattern
-        blank=True,
+        blank=True, 
     )
     
     # Appointment details
@@ -144,7 +145,7 @@ class Appointment(BaseModel):
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
-        default='scheduled'
+        default='awaiting'
     )
     
     # Additional fields
@@ -182,6 +183,15 @@ class Appointment(BaseModel):
     def is_doctor_assigned(self):
         return self.doctor_profile is not None
     
+    def is_active(self):
+        """Check if queue entry is active AND patient is online"""
+        if self.status not in ['awaiting', 'scheduled', 'confirmed']:
+            return True    
+        return False
+    
+    def cancel(self):
+        self.status = 'cancelled'
+        self.save()    
     @property
     def appointment_display(self):
         doctor = self.doctor_profile.profile.user.get_full_name() if self.doctor_profile else "No doctor assigned"
