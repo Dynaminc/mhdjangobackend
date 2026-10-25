@@ -26,3 +26,4 @@ dist/
 */migrations/__pycache__/
 migrations
 .env
+*.json

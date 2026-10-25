@@ -312,10 +312,16 @@ class ConsultationViewSet(viewsets.ModelViewSet):
             404: "Not found",
         }
     )
+    
     @action(detail=False, methods=['post'], url_path='complete-by-mh-user-id')
     def complete_by_mh_user_id(self, request):
+        """
+        End the patient's current ongoing consultation.
+
+        Body:
+            mh_user_id (required) — e.g. "MH-2026-1358F4D6"
+        """
         mh_user_id = request.data.get('mh_user_id')
-        consultation_id = request.data.get('consultation_id')
 
         if not mh_user_id:
             return Response(
@@ -327,17 +333,29 @@ class ConsultationViewSet(viewsets.ModelViewSet):
         if error:
             return Response({'error': error}, status=status.HTTP_404_NOT_FOUND)
 
-        consultation = self._purge_stale_ongoing(patient_profile, consultation_id)
+        # Sweep duplicates first; a single ongoing is left untouched.
+        self._purge_junk_ongoing(patient_profile)
+
+        consultation = (
+            patient_profile.consultations
+            .filter(status='ongoing')
+            .order_by('-created_at')
+            .first()
+        )
         if not consultation:
             return Response(
-                {'error': 'No ongoing consultation found for this patient'},
-                status=status.HTTP_404_NOT_FOUND,
+                {'message': 'No ongoing consultation found for this patient'},
+                status=status.HTTP_200_OK,
             )
 
-        if (
-            hasattr(request.user.profile, 'doctor_profile') and
-            request.user.profile.doctor_profile != consultation.doctor_profile
-        ):
+        # Only the assigned doctor may complete it
+        request_doctor = getattr(request.user.profile, 'doctor_profile', None)
+        if request_doctor is None:
+            return Response(
+                {'error': 'Only a doctor can complete a consultation'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if consultation.doctor_profile_id != request_doctor.id:
             return Response(
                 {'error': 'Only the assigned doctor can complete this consultation'},
                 status=status.HTTP_403_FORBIDDEN,

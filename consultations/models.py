@@ -149,7 +149,7 @@ class Consultation(BaseModel):
         from django.utils import timezone
         self.status = 'completed'
         self.save()
-        update_medical_record_on_consultation(self)
+        # update_medical_record_on_consultation(self)
         # Close the linked appointment too
         if getattr(self, 'appointment', None):
             self.appointment.status = 'completed'

@@ -22,3 +22,4 @@ paystack
 django-otp
 qrcode
 google-auth
+firebase-admin

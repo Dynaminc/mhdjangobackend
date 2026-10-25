@@ -911,17 +911,17 @@ class QueueViewSet(viewsets.GenericViewSet):
         """
         from appointments.models import Appointment
 
-        print("\n" + "=" * 70)
-        print("🔎 get_queue called")
-        print("=" * 70)
-        print(f"user            = {request.user}")
-        print(f"is_authenticated= {request.user.is_authenticated}")
-        print(f"is_staff        = {request.user.is_staff}")
+        # print("\n" + "=" * 70)
+        # print("🔎 get_queue called")
+        # print("=" * 70)
+        # print(f"user            = {request.user}")
+        # print(f"is_authenticated= {request.user.is_authenticated}")
+        # print(f"is_staff        = {request.user.is_staff}")
 
         user = request.user
         profile = getattr(user, 'profile', None)
-        print(f"profile         = {profile}")
-        print(f"profile.role    = {getattr(profile, 'role', None)}")
+        # print(f"profile         = {profile}")
+        # print(f"profile.role    = {getattr(profile, 'role', None)}")
 
         # ── 1. Base queue ──────────────────────────────────────────
         queue_data = queue.get_queue()

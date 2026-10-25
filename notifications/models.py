@@ -8,8 +8,23 @@ from accounts.models import BaseModel, Profile, DoctorProfile, PatientProfile
 from django.utils import timezone
 import uuid
 from django.db.models import Q
+from django.conf import settings
+from django.db import models
 
 
+class BrowserDevice(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="browser_devices",
+    )
+
+    token = models.TextField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Browser device for user {self.user_id}"
 # ============================================
 # NOTIFICATION MODEL
 # ============================================
