@@ -3,7 +3,7 @@
 import uuid
 import requests
 import requests as http_requests
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login
@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-
+from django.utils.dateparse import parse_date
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from django_filters.rest_framework import DjangoFilterBackend
@@ -645,7 +645,6 @@ class GoogleSignUpView(APIView):
         return profile
     
     def link_referral(self, ref_id, user, profile):
-        from datetime import timedelta
 
         if not ref_id:
             return
@@ -1439,22 +1438,13 @@ class InitialOnboardingView(APIView):
         # Parse date_of_birth from string to date
         dob_str = data.get('date_of_birth')
         if dob_str:
-            try:
-                # Try parsing as YYYY-MM-DD
-                profile.date_of_birth = datetime.strptime(dob_str, '%Y-%m-%d').date()
-            except ValueError:
-                try:
-                    # Try parsing as MM/DD/YYYY
-                    profile.date_of_birth = datetime.strptime(dob_str, '%m/%d/%Y').date()
-                except ValueError:
-                    try:
-                        # Try parsing as DD/MM/YYYY
-                        profile.date_of_birth = datetime.strptime(dob_str, '%d/%m/%Y').date()
-                    except ValueError:
-                        return Response({
-                            'status': 'error',
-                            'message': 'Invalid date format. Use YYYY-MM-DD'
-                        }, status=status.HTTP_400_BAD_REQUEST)
+            dob = parse_date(dob_str)
+            if dob is None:
+                return Response(
+                    {'status': 'error', 'message': 'Invalid date. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            profile.date_of_birth = dob
     
         # Update location fields (you'll need to add these to Profile model)
         profile.country = data.get('country', getattr(profile, 'country', ''))
@@ -1471,7 +1461,6 @@ class InitialOnboardingView(APIView):
         # Calculate age from date_of_birth
         age = None
         if profile.date_of_birth:
-            from datetime import date
             today = date.today()
             age = today.year - profile.date_of_birth.year
             if today.month < profile.date_of_birth.month or \
