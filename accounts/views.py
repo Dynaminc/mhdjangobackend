@@ -61,7 +61,8 @@ class RegisterView(generics.CreateAPIView):
             f"?uid={uid}&token={token}"
         )
         
-        ref_id = serializer.validated_data['ref_id']
+        ref_id = serializer.validated_data.get('ref_id')
+        # ['ref_id']
         print('Has ref id', ref_id)
         
         if not ref_id:
