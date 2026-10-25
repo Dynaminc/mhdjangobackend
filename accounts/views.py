@@ -980,7 +980,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         
         # If not staff, users can only see their own profile
-        if not self.request.user.is_staff:
+        if not self.request.user.is_superuser:
             return queryset.filter(user=self.request.user)
         
         return queryset

@@ -38,6 +38,70 @@ class FileUploadView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+
+
+class FileServeBrowserView(APIView):
+    """
+    Same logic as FileServeView, but accepts ?token=<jwt> for <img>/<a>.
+    Used only by the admin web panel — mobile app keeps using FileServeView.
+    """
+    permission_classes = [permissions.AllowAny]  # we authenticate manually
+
+    def get(self, request, file_id):
+        user = None
+
+        # 1. Try Authorization header (same as normal)
+        header = request.headers.get('Authorization', '')
+        if header.startswith('Bearer '):
+            try:
+                jwt_auth = JWTAuthentication()
+                token = jwt_auth.get_validated_token(header.split(' ', 1)[1])
+                user = jwt_auth.get_user(token)
+            except (InvalidToken, TokenError):
+                pass
+
+        # 2. Fall back to ?token=<jwt> (browser)
+        if user is None:
+            qtoken = request.query_params.get('token')
+            if qtoken:
+                try:
+                    jwt_auth = JWTAuthentication()
+                    validated = jwt_auth.get_validated_token(qtoken)
+                    user = jwt_auth.get_user(validated)
+                except (InvalidToken, TokenError):
+                    pass
+
+        if user is None:
+            return Response(
+                {'detail': 'Authentication credentials were not provided.'},
+                status=401,
+                headers={'WWW-Authenticate': 'Bearer realm="api"'},
+            )
+
+        # ── Same authorization logic as FileServeView ──
+        sf = get_object_or_404(SecureFile, id=file_id)
+
+        profile = getattr(user, 'profile', None)
+        is_owner = sf.owner_id == user.id
+        is_doctor = bool(profile and profile.role == 'doctor')
+        is_admin = user.is_staff
+
+        if not (is_owner or is_doctor or is_admin):
+            return Response({'error': 'forbidden'}, status=403)
+
+        try:
+            raw = read_file(sf.path)
+        except FileNotFoundError:
+            return Response({'error': 'file missing on disk'}, status=404)
+
+        response = HttpResponse(raw, content_type=sf.mime or 'application/octet-stream')
+        response['Content-Disposition'] = f'inline; filename="{sf.filename}"'
+        response['Content-Length'] = len(raw)
+        return response
+    
+
 class FileServeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

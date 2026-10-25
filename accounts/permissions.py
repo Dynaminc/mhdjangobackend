@@ -2,7 +2,23 @@
 from rest_framework import permissions
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-
+class IsAdmin(BasePermission):
+    """Doctor OR patient OR staff OR superuser."""
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
+            return True
+        return False
+        # profile = getattr(user, 'profile', None)
+        # if not profile:
+        #     return False
+        # return (
+        #     getattr(profile, 'role', None) in ('doctor', 'patient')
+        #     or getattr(profile, 'doctor_profile', None) is not None
+        #     or getattr(profile, 'patient_profile', None) is not None
+        # )
 
 
 class IsAdminOrDoctor(BasePermission):

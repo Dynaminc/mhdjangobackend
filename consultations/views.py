@@ -5,6 +5,7 @@ from django.db.models.functions import Length
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from accounts.permissions import IsAdminOrDoctor, IsAdmin
 from consultations.models import Consultation
 from .serializers import  *
 import requests
@@ -103,44 +104,57 @@ class ConsultationViewSet(viewsets.ModelViewSet):
     # =====================================================
     def get_queryset(self):
         qs = super().get_queryset()
-
+        print(qs)
         # ✅ Only return consultations that actually have HPC content
         # qs = qs.annotate(hpc_length=Length('hpc')).filter(hpc_length__gt=10)
 
         user = self.request.user
+        if user.is_superuser:
+            
+            return qs
+        
         if not hasattr(user, 'profile'):
             return qs.none()
-
+            
         if hasattr(user.profile, 'patient_profile'):
             return qs.filter(patient_profile=user.profile.patient_profile)
 
         if hasattr(user.profile, 'doctor_profile'):
             return qs.filter(doctor_profile=user.profile.doctor_profile)
 
-        if user.is_staff:
-            return qs
 
+  
         return qs.none()
 
     # =====================================================
     # PERMISSIONS
     # =====================================================
+    # def get_permissions(self):
+    #     if self.action in [
+    #         'create',
+    #         'create_from_appointment',
+    #         'complete_by_mh_user_id',
+    #         'update',
+    #         'partial_update',
+    #         'destroy',
+    #         'add_examination',
+    #         'link_chat',
+    #     ]:
+    #         self.permission_classes = [IsDoctor, IsAdminOrDoctor]
+    #     else:
+    #         self.permission_classes = [IsDoctorOrPatient,IsAdmin]
+    #     return [p() for p in self.permission_classes]
+
     def get_permissions(self):
         if self.action in [
-            'create',
-            'create_from_appointment',
-            'complete_by_mh_user_id',
-            'update',
-            'partial_update',
-            'destroy',
-            'add_examination',
-            'link_chat',
+            'create', 'create_from_appointment', 'complete_by_mh_user_id',
+            'update', 'partial_update', 'destroy',
+            'add_examination', 'link_chat',
         ]:
-            self.permission_classes = [IsDoctor]
+            self.permission_classes = [IsDoctor | IsAdmin]
         else:
-            self.permission_classes = [IsDoctorOrPatient]
+            self.permission_classes = [IsDoctorOrPatient | IsAdmin]
         return [p() for p in self.permission_classes]
-
     # =====================================================
     # HELPER — mh_user_id → PatientProfile (auto-create)
     # =====================================================

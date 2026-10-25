@@ -7,14 +7,14 @@ from drf_yasg import openapi
 
 from .models import LabTestOrder
 from .serializers import LabTestOrderSerializer, LabTestOrderCreateSerializer
-from accounts.permissions import IsDoctorOrPatient
+from accounts.permissions import IsDoctorOrPatient, IsAdmin
 from accounts.models import Profile, PatientProfile
 from consultations.models import Consultation
 from django.db import transaction
 
 class LabTestOrderViewSet(viewsets.ModelViewSet):
     queryset = LabTestOrder.objects.all()
-    permission_classes = [IsDoctorOrPatient]
+    permission_classes = [IsDoctorOrPatient | IsAdmin]
 
     def get_serializer_class(self):
         if self.action == 'create':
