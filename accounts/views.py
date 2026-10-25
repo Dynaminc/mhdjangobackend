@@ -32,6 +32,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Profile
 from .serializers import *
 from .tokens import email_verification_token
+from notifications.email_templates import (
+    send_verify_email,
+    send_reset_password_email,
+    send_referral_email,
+)
 
 class RegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
@@ -61,19 +66,19 @@ class RegisterView(generics.CreateAPIView):
         
         if not ref_id:
             # Send email
-            send_mail(
-                subject='Verify your MHPro account',
-                message=(
-                    f"Hi {user.first_name or user.email},\n\n"
-                    f"Please verify your email by clicking the link below:\n\n"
-                    f"{verify_url}\n\n"
-                    f"If you didn't sign up, ignore this email."
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=False,
-            )
-            
+            # send_mail(
+            #     subject='Verify your MHPro account',
+            #     message=(
+            #         f"Hi {user.first_name or user.email},\n\n"
+            #         f"Please verify your email by clicking the link below:\n\n"
+            #         f"{verify_url}\n\n"
+            #         f"If you didn't sign up, ignore this email."
+            #     ),
+            #     from_email=settings.DEFAULT_FROM_EMAIL,
+            #     recipient_list=[user.email],
+            #     fail_silently=False,
+            # )
+            send_verify_email(user=user, verify_url=verify_url, expires_hours=24)
             
         if ref_id:
             print("loggin in by refereeal")
@@ -442,13 +447,13 @@ class ResendVerificationView(APIView):
             reverse('verify-email') + f'?uid={uid}&token={token}'
         )
 
-        send_mail(
-            subject='Verify your MHPro account',
-            message=f"Click to verify: {verify_url}",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-        )
-
+        # send_mail(
+        #     subject='Verify your MHPro account',
+        #     message=f"Click to verify: {verify_url}",
+        #     from_email=settings.DEFAULT_FROM_EMAIL,
+        #     recipient_list=[user.email],
+        # )
+        send_verify_email(user=user, verify_url=verify_url)
         return Response({'status': 'success', 'message': 'Verification email sent.'})
     
 class GoogleSignUpView(APIView):
@@ -1242,18 +1247,19 @@ class ForgotPasswordView(APIView):
             f"?uid={uid}&token={token}"
         )
 
-        send_mail(
-            subject='Reset your MHPro password',
-            message=(
-                f"Hi {user.first_name or user.email},\n\n"
-                f"Click the link below to reset your password:\n\n"
-                f"{reset_url}\n\n"
-                f"If you didn't request this, ignore this email."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
+        # send_mail(
+        #     subject='Reset your MHPro password',
+        #     message=(
+        #         f"Hi {user.first_name or user.email},\n\n"
+        #         f"Click the link below to reset your password:\n\n"
+        #         f"{reset_url}\n\n"
+        #         f"If you didn't request this, ignore this email."
+        #     ),
+        #     from_email=settings.DEFAULT_FROM_EMAIL,
+        #     recipient_list=[user.email],
+        #     fail_silently=False,
+        # )
+        send_reset_password_email(user=user, reset_url=reset_url, expires_hours=1)
 
         return Response({
             'status': 'success',
