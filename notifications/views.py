@@ -276,144 +276,63 @@ from .serializers import (
 )
 
 
-class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Read-only list / retrieve of the *current user's* notifications,
-    plus mutation actions for read / unread / dismiss.
-    """
+class NotificationViewSet(viewsets.ModelViewSet):
+    """CRUD + custom actions for the current user's notifications."""
     serializer_class = NotificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    ordering = ['-created_at']
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch']  # no DELETE — use dismiss
 
     def get_queryset(self):
-        # Hard scope: a user can only ever see their own notifications.
-        qs = Notification.objects.filter(user=self.request.user)
+        return Notification.objects.filter(
+            user=self.request.user,
+            is_dismissed=False,
+            is_expired=False,
+        )
 
-        # Default: hide expired / dismissed from normal listing
-        include_dismissed = self.request.query_params.get('include_dismissed') == '1'
-        include_expired   = self.request.query_params.get('include_expired') == '1'
-        if not include_dismissed:
-            qs = qs.filter(is_dismissed=False)
-        if not include_expired:
-            qs = qs.filter(is_expired=False)
-
-        # ?unread=1  → only unread
-        if self.request.query_params.get('unread') == '1':
+    # GET /notifications/notifications/
+    def list(self, request):
+        qs = self.get_queryset()
+        # Optional filters
+        if request.query_params.get('unread') == 'true':
             qs = qs.filter(is_read=False)
+        if request.query_params.get('type'):
+            qs = qs.filter(notification_type=request.query_params['type'])
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(self.get_serializer(page, many=True).data)
+        return Response(self.get_serializer(qs, many=True).data)
 
-        # ?type=appointment_created  → filter by notification_type
-        ntype = self.request.query_params.get('type')
-        if ntype:
-            qs = qs.filter(notification_type=ntype)
-
-        # ?priority=high
-        priority = self.request.query_params.get('priority')
-        if priority:
-            qs = qs.filter(priority=priority)
-
-        return qs
-
-    # ----------------------------------------------------
-    # List / retrieve use default DRF behaviour
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="List notifications for the current user",
-        manual_parameters=[
-            openapi.Parameter('unread', openapi.IN_QUERY, type=openapi.TYPE_BOOLEAN,
-                              description='Only unread notifications'),
-            openapi.Parameter('type', openapi.IN_QUERY, type=openapi.TYPE_STRING,
-                              description='Filter by notification_type'),
-            openapi.Parameter('priority', openapi.IN_QUERY, type=openapi.TYPE_STRING,
-                              description='Filter by priority'),
-            openapi.Parameter('include_dismissed', openapi.IN_QUERY,
-                              type=openapi.TYPE_BOOLEAN,
-                              description='Include dismissed notifications'),
-            openapi.Parameter('include_expired', openapi.IN_QUERY,
-                              type=openapi.TYPE_BOOLEAN,
-                              description='Include expired notifications'),
-        ],
-        responses={200: NotificationSerializer(many=True)},
-    )
-    def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
-
-    # ----------------------------------------------------
-    # Unread count — cheap endpoint for the bell badge
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Unread notification count for the current user",
-        responses={200: openapi.Response('Unread count')},
-    )
+    # GET /notifications/notifications/unread-count/
     @action(detail=False, methods=['get'], url_path='unread-count')
     def unread_count(self, request):
-        count = Notification.get_unread_count(request.user)
+        count = self.get_queryset().filter(is_read=False).count()
         return Response({'status': 'success', 'unread': count})
 
-    # ----------------------------------------------------
-    # Mark a single notification as read
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Mark a notification as read",
-        responses={200: NotificationSerializer()},
-    )
+    # POST /notifications/notifications/{pk}/read/
     @action(detail=True, methods=['post'], url_path='read')
     def mark_read(self, request, pk=None):
-        notification = self.get_object()
-        notification.mark_as_read()
-        return Response({
-            'status': 'success',
-            'data': NotificationSerializer(notification).data,
-        })
+        notif = self.get_object()
+        if not notif.is_read:
+            notif.is_read = True
+            notif.read_at = timezone.now()
+            notif.save(update_fields=['is_read', 'read_at'])
+        return Response({'status': 'success', 'data': self.get_serializer(notif).data})
 
-    # ----------------------------------------------------
-    # Mark a single notification as unread
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Mark a notification as unread",
-        responses={200: NotificationSerializer()},
-    )
-    @action(detail=True, methods=['post'], url_path='unread')
-    def mark_unread(self, request, pk=None):
-        notification = self.get_object()
-        if notification.is_read:
-            notification.is_read = False
-            notification.read_at = None
-            notification.save(update_fields=['is_read', 'read_at'])
-        return Response({
-            'status': 'success',
-            'data': NotificationSerializer(notification).data,
-        })
-
-    # ----------------------------------------------------
-    # Dismiss a single notification
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Dismiss a notification (hidden from list)",
-        responses={200: openapi.Response('Dismissed')},
-    )
-    @action(detail=True, methods=['post'], url_path='dismiss')
-    def dismiss(self, request, pk=None):
-        notification = self.get_object()
-        notification.dismiss()
-        return Response({'status': 'success'})
-
-    # ----------------------------------------------------
-    # Bulk: mark all read
-    # ----------------------------------------------------
-    @swagger_auto_schema(
-        operation_description="Mark all current user's notifications as read",
-        responses={200: openapi.Response('Bulk result')},
-    )
+    # POST /notifications/notifications/mark-all-read/
     @action(detail=False, methods=['post'], url_path='mark-all-read')
     def mark_all_read(self, request):
-        qs = Notification.objects.filter(user=request.user, is_read=False)
-        count = qs.count()
-        qs.update(is_read=True, read_at=timezone.now())
-        return Response({
-            'status': 'success',
-            'updated': count,
-        })
+        updated = self.get_queryset().filter(is_read=False).update(
+            is_read=True, read_at=timezone.now(),
+        )
+        return Response({'status': 'success', 'updated': updated})
 
+    # POST /notifications/notifications/{pk}/dismiss/
+    @action(detail=True, methods=['post'], url_path='dismiss')
+    def dismiss(self, request, pk=None):
+        notif = self.get_object()
+        notif.is_dismissed = True
+        notif.save(update_fields=['is_dismissed'])
+        return Response({'status': 'success'})
 
 class NotificationPreferenceViewSet(viewsets.GenericViewSet):
     """

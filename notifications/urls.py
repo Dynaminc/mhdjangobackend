@@ -13,6 +13,7 @@ router = DefaultRouter()
 router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
+    path('', include(router.urls)),
     path(
         "register/",
         register_device,
