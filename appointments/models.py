@@ -9,6 +9,10 @@ from django.core.cache import cache
 from django.db import models
 from accounts.models import BaseModel, Profile, DoctorProfile, PatientProfile
 
+from notifications.models import NotificationSignalHandler
+from django.dispatch import receiver
+from django.db.models.signals import post_save, pre_save
+
 class Clinic(BaseModel):
     """Medical clinic/facility"""
     name = models.CharField(max_length=255)
@@ -367,3 +371,226 @@ class DoctorAvailability(BaseModel):
     class Meta:
         ordering = ['day_of_week', 'start_time']
         unique_together = ['doctor_profile', 'day_of_week', 'start_time', 'end_time']
+        
+        
+        
+        
+# notifications/models.py  (appointment + queue receivers only)
+
+
+# ============================================
+# APPOINTMENT NOTIFICATIONS
+# ============================================
+@receiver(post_save, sender='appointments.Appointment')
+def handle_appointment_notification(sender, instance, created, **kwargs):
+    """
+    Notifications for every Appointment transition:
+
+        created                      → patient + doctor
+        doctor assigned (unchanged)  → patient + new doctor
+        status → confirmed           → patient
+        status → in_progress         → patient
+        status → completed           → patient
+        status → cancelled           → patient + doctor
+        status → no_show             → patient + doctor
+
+    Reads `_previous_status` / `_previous_doctor_id`, which are set by
+    apps.appointments.signals.track_appointment_previous_state.
+    """
+    handler = NotificationSignalHandler()
+
+    # ── Resolve users (guarded — either side may be absent) ───
+    patient_user = (
+        instance.patient_profile.profile.user
+        if instance.patient_profile_id else None
+    )
+    doctor_user = (
+        instance.doctor_profile.profile.user
+        if instance.doctor_profile_id else None
+    )
+
+    if not patient_user and not doctor_user:
+        return
+
+    patient_name = (
+        patient_user.get_full_name() or patient_user.username
+        if patient_user else "the patient"
+    )
+    doctor_name = (
+        f"Dr. {doctor_user.get_full_name() or doctor_user.username}"
+        if doctor_user else "your doctor"
+    )
+    when = f"{instance.appointment_date} at {instance.start_time}"
+
+    def _mk(user, ntype, title, msg, priority='medium'):
+        if user is None:
+            return None
+        return handler.create_notification(
+            user=user,
+            notification_type=ntype,
+            title=title,
+            message=msg,
+            priority=priority,
+            related_object_id=str(instance.id),
+            related_object_type='appointment',
+            related_url=f'/appointments/{instance.id}/',
+            data={
+                'appointment_id': instance.id,
+                'status': instance.status,
+                'appointment_date': str(instance.appointment_date),
+                'start_time': str(instance.start_time),
+            },
+        )
+
+    previous_status = getattr(instance, '_previous_status', None)
+    previous_doctor_id = getattr(instance, '_previous_doctor_id', None)
+
+    # ── 1. Creation ───────────────────────────────────────────
+    if created:
+        _mk(
+            patient_user, 'appointment_created',
+            'Appointment Scheduled',
+            f"Your appointment on {when} has been scheduled.",
+        )
+        _mk(
+            doctor_user, 'appointment_created',
+            'New Appointment',
+            f"New appointment with {patient_name} on {when}.",
+            priority='high',
+        )
+        return
+
+    # ── 2. Doctor just assigned to an existing appointment ────
+    doctor_just_assigned = (
+        instance.doctor_profile_id is not None
+        and previous_doctor_id != instance.doctor_profile_id
+    )
+    if doctor_just_assigned:
+        _mk(
+            doctor_user, 'appointment_created',
+            'New Appointment Assigned',
+            f"You have been assigned to see {patient_name} on {when}.",
+            priority='high',
+        )
+        _mk(
+            patient_user, 'appointment_confirmed',
+            'Doctor Assigned',
+            f"{doctor_name} will see you on {when}.",
+        )
+
+    # ── 3. Status transitions (only on real change) ───────────
+    if previous_status == instance.status:
+        return
+
+    if instance.status == 'confirmed':
+        _mk(
+            patient_user, 'appointment_confirmed',
+            'Appointment Confirmed',
+            f"Your appointment with {doctor_name} on {when} has been confirmed.",
+        )
+
+    elif instance.status == 'in_progress':
+        _mk(
+            patient_user, 'appointment_reminder',
+            'Appointment Starting',
+            f"Your appointment with {doctor_name} is starting now.",
+            priority='high',
+        )
+
+    elif instance.status == 'completed':
+        _mk(
+            patient_user, 'appointment_completed',
+            'Appointment Completed',
+            f"Your appointment with {doctor_name} on {when} is complete.",
+        )
+
+    elif instance.status == 'cancelled':
+        _mk(
+            patient_user, 'appointment_cancelled',
+            'Appointment Cancelled',
+            f"Your appointment with {doctor_name} on {when} has been cancelled.",
+            priority='high',
+        )
+        _mk(
+            doctor_user, 'appointment_cancelled',
+            'Appointment Cancelled',
+            f"Appointment with {patient_name} on {when} has been cancelled.",
+        )
+
+    elif instance.status == 'no_show':
+        _mk(
+            patient_user, 'appointment_no_show',
+            'No-Show Recorded',
+            f"You were marked as a no-show for {when}.",
+        )
+        _mk(
+            doctor_user, 'appointment_no_show',
+            'No-Show Recorded',
+            f"{patient_name} did not attend {when}.",
+        )
+
+
+# ============================================
+# QUEUE ENTRY NOTIFICATIONS
+# ============================================
+@receiver(post_save, sender='appointments.QueueEntry')
+def handle_queue_notification(sender, instance, created, **kwargs):
+    """
+    Notifications for the QueueEntry model path.
+
+    NOTE: QueueViewSet uses an in-memory queue_service and does NOT write
+    QueueEntry rows. For those actions, call
+    notifications.helpers.notify_queue_event(...) directly from the view.
+    This handler only fires for the legacy QueueEntryViewSet path.
+    """
+    handler = NotificationSignalHandler()
+
+    if not instance.patient_profile_id:
+        return
+
+    patient_user = instance.patient_profile.profile.user
+
+    def _mk(ntype, title, msg, priority='medium'):
+        return handler.create_notification(
+            user=patient_user,
+            notification_type=ntype,
+            title=title,
+            message=msg,
+            priority=priority,
+            related_object_id=str(instance.id),
+            related_object_type='queue',
+            related_url='/queue/',
+            data={
+                'queue_entry_id': instance.id,
+                'queue_position': instance.queue_position,
+                'wait_time_minutes': instance.wait_time_minutes,
+            },
+        )
+
+    if created:
+        _mk(
+            'queue_waiting',
+            'Added to Queue',
+            f"You are in position {instance.queue_position} in the queue. "
+            f"Estimated wait: {instance.wait_time_minutes} minutes.",
+        )
+        return
+
+    if instance.status == 'admitted':
+        _mk(
+            'queue_admitted',
+            '✅ Admitted from Queue',
+            "You have been admitted. Your consultation will begin shortly.",
+            priority='high',
+        )
+        return
+
+    previous_position = getattr(instance, '_original_queue_position', None)
+    if previous_position is not None and instance.queue_position != previous_position:
+        _mk(
+            'queue_position_updated',
+            'Queue Position Updated',
+            f"You are now at position {instance.queue_position}. "
+            f"Estimated wait: {instance.wait_time_minutes} minutes.",
+            priority='low',
+        )        

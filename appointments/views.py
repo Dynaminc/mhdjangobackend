@@ -836,6 +836,16 @@ from accounts.permissions import IsPatient, IsDoctor
 from django.db.models import Value
 from django.db.models.functions import Length, Coalesce
 
+# apps/appointments/views.py  (QueueViewSet only — same imports as your file)
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+from .queue_service import queue
+from accounts.permissions import IsPatient, IsDoctor
+from django.db.models import Value
+from django.db.models.functions import Length, Coalesce
 
 
 class QueueViewSet(viewsets.GenericViewSet):
@@ -844,7 +854,7 @@ class QueueViewSet(viewsets.GenericViewSet):
     Simple queue management using a list/array
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     @swagger_auto_schema(
         operation_description="Get current queue",
         responses={200: openapi.Response('Queue list')}
@@ -902,8 +912,36 @@ class QueueViewSet(viewsets.GenericViewSet):
             f"found={len(ongoing)} kept={[c.id for c in ongoing if c.id not in to_delete]} "
             f"deleted={to_delete}"
         )
-        return to_delete    
-    
+        return to_delete
+
+    # ── NEW: resolve the patient's open-appointment doctor (for join email) ──
+    def _resolve_open_appointment_doctor_email(self, patient_profile):
+        """
+        Return the email of the doctor on the patient's most-recent *open*
+        appointment (scheduled / confirmed / in_progress), or None.
+
+        Used by join_me() to CC the assigned doctor on the join email.
+        """
+        if not patient_profile:
+            return None
+
+        from appointments.models import Appointment
+
+        appt = (
+            Appointment.objects
+            .filter(
+                patient_profile=patient_profile,
+                status__in=['scheduled', 'confirmed', 'in_progress'],
+                doctor_profile__isnull=False,
+            )
+            .select_related('doctor_profile__profile__user')
+            .order_by('-created_at')
+            .first()
+        )
+        if not appt or not appt.doctor_profile:
+            return None
+        return appt.doctor_profile.profile.user.email or None
+
     @action(detail=False, methods=['get'], url_path='list')
     def get_queue(self, request):
         """
@@ -911,45 +949,19 @@ class QueueViewSet(viewsets.GenericViewSet):
         """
         from appointments.models import Appointment
 
-        # print("\n" + "=" * 70)
-        # print("🔎 get_queue called")
-        # print("=" * 70)
-        # print(f"user            = {request.user}")
-        # print(f"is_authenticated= {request.user.is_authenticated}")
-        # print(f"is_staff        = {request.user.is_staff}")
-
         user = request.user
         profile = getattr(user, 'profile', None)
-        # print(f"profile         = {profile}")
-        # print(f"profile.role    = {getattr(profile, 'role', None)}")
 
         # ── 1. Base queue ──────────────────────────────────────────
         queue_data = queue.get_queue()
-        # print(f"\n📋 raw queue length = {len(queue_data)}")
-        # for row in queue_data:
-        #     print(f"   row → {row}")
-
         all_patient_ids = [row['patient_id'] for row in queue_data]
-        # print(f"\nall_patient_ids = {all_patient_ids}")
 
         # ── 2. Active appointments ─────────────────────────────────
         active_appointments = (
             Appointment.objects.all().values_list('patient_profile_id', 'doctor_profile_id')
-            # .filter(
-            #     patient_profile_id__in=all_patient_ids,
-            #     status__in=['scheduled', 'confirmed', 'in_progress'],
-            # )
-            
         )
         # print('active appointment here')
         patient_to_doctor = dict(active_appointments)
-        # print(patient_to_doctor)
-
-        # print(f"\n🗓️  patient → doctor mapping (active appointments):")
-        # if not patient_to_doctor:
-        #     print("   (none)")
-        # for pid, did in patient_to_doctor.items():
-        #     print(f"   patient {pid} → doctor {did}")
 
         # ── 3. Caller's doctor_profile ─────────────────────────────
         doctor_profile = None
@@ -957,22 +969,17 @@ class QueueViewSet(viewsets.GenericViewSet):
             doctor_profile = getattr(profile, 'doctor_profile', None)
 
         my_doctor_id = doctor_profile.id if doctor_profile else None
-        # print(f"\n👨‍⚕️ caller doctor_profile = {doctor_profile}")
-        # print(f"👨‍⚕️ my_doctor_id          = {my_doctor_id}")
 
         # ── 4. Visibility rules ────────────────────────────────────
         visible = []
 
         if user.is_staff:
-            # print("\n🟢 branch: STAFF → visible = all")
             visible = list(queue_data)
 
         elif my_doctor_id is not None:
-            # print(f"\n🟢 branch: DOCTOR (id={my_doctor_id})")
             for row in queue_data:
                 pid = row['patient_id']
                 assigned_doctor = patient_to_doctor.get(pid)
-                # print(f"   patient {pid}: assigned_doctor={assigned_doctor}", end=" → ")
 
                 if assigned_doctor is None:
                     row = {**row, 'assigned_to_me': False, 'unassigned': True}
@@ -998,11 +1005,6 @@ class QueueViewSet(viewsets.GenericViewSet):
                     pass
                     # print("SKIP")
 
-        # print(f"\n✅ visible count = {len(visible)}")
-        # for row in visible:
-        #     print(f"   → {row}")
-        # print("=" * 70 + "\n")
-
         return Response({
             'status': 'success',
             'count': len(visible),
@@ -1013,7 +1015,8 @@ class QueueViewSet(viewsets.GenericViewSet):
                 else 'unassigned_only'
             ),
             'data': visible,
-        })        
+        })
+
     @swagger_auto_schema(
         operation_description="Get my queue position - also acts as heartbeat",
         responses={200: openapi.Response('Queue position')}
@@ -1026,11 +1029,11 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only patients can check their position'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         patient = request.user.profile
         print(queue.get_queue())
         result = queue.get_position(patient.id)
-        
+
         if result:
             return Response({
                 'status': 'success',
@@ -1040,13 +1043,13 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'queue_length': result['queue_length'],
                 'is_online': True
             })
-        
+
         return Response({
             'status': 'success',
             'in_queue': False,
             'message': 'You are not in the queue'
         })
-    
+
     @swagger_auto_schema(
         operation_description="Join the queue as current user",
         responses={200: openapi.Response('Queue position')}
@@ -1059,12 +1062,12 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only patients can join the queue'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         patient = request.user.profile
         patient_id = patient.id
         mh_user_id = patient.mh_user_id
         name = request.user.get_full_name()
-        
+
         if queue.is_in_queue(patient_id):
             position = queue.get_position(patient_id)
             return Response({
@@ -1072,23 +1075,34 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'message': 'You are already in the queue',
                 'position': position['position'] if position else None
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        result = queue.join(patient_id, mh_user_id, name)
-        
+
+        # ✅ CC the assigned doctor if the patient has an open appointment
+        doctor_email = self._resolve_open_appointment_doctor_email(
+            patient.patient_profile
+        )
+
+        result = queue.join(
+            patient_id,
+            mh_user_id,
+            name,
+            doctor_email=doctor_email,
+        )
+
         if 'error' in result:
             return Response({
                 'status': 'error',
                 'message': result['error']
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         return Response({
             'status': 'success',
             'message': f'You joined the queue',
             'position': result['position'],
             'patients_ahead': result['patients_ahead'],
-            'queue_length': result['queue_length']
+            'queue_length': result['queue_length'],
+            'notified_doctor': bool(doctor_email),
         })
-    
+
     @swagger_auto_schema(
         operation_description="Leave the queue as current user",
         responses={200: openapi.Response('Left queue')}
@@ -1101,21 +1115,21 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only patients can leave the queue'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         patient = request.user.profile.patient_profile
         result = queue.leave(patient.id)
-        
+
         if 'error' in result:
             return Response({
                 'status': 'error',
                 'message': result['error']
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         return Response({
             'status': 'success',
             'message': 'You left the queue'
         })
-    
+
     @swagger_auto_schema(
         operation_description="Get next patient (doctor only)",
         responses={200: openapi.Response('Next patient')}
@@ -1128,15 +1142,15 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can get the next patient'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         result = queue.next()
-        
+
         if 'error' in result:
             return Response({
                 'status': 'error',
                 'message': result['error']
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         # Get patient details
         from accounts.models import PatientProfile
         try:
@@ -1158,7 +1172,7 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'patient_id': result['patient_id'],
                 'remaining': result['remaining']
             })
-    
+
     @swagger_auto_schema(
         operation_description="✅ Admit a specific patient (doctor only)",
         request_body=openapi.Schema(
@@ -1173,56 +1187,6 @@ class QueueViewSet(viewsets.GenericViewSet):
         ),
         responses={200: openapi.Response('Patient admitted')}
     )
-    # @action(detail=False, methods=['post'], url_path='admit')
-    # def admit_patient(self, request):
-    #     """
-    #     ✅ Admit a specific patient from the queue
-    #     This pops them from the queue and marks them as admitted
-    #     """
-    #     print(request.user.profile) #hasattr(request.user.profile, 'doctor_profile')
-    #     if not request.user.profile.role == 'doctor':
-    #         return Response({
-    #             'status': 'error',
-    #             'message': 'Only doctors can admit patients'
-    #         }, status=status.HTTP_403_FORBIDDEN)
-        
-    #     patient_id = request.data.get('patient_id')
-    #     if not patient_id:
-    #         return Response({
-    #             'status': 'error',
-    #             'message': 'patient_id is required'
-    #         }, status=status.HTTP_400_BAD_REQUEST)
-        
-    #     result = queue.admit(patient_id)
-        
-    #     if 'error' in result:
-    #         return Response({
-    #             'status': 'error',
-    #             'message': result['error']
-    #         }, status=status.HTTP_400_BAD_REQUEST)
-        
-    #     # Get patient details
-    #     from accounts.models import PatientProfile
-    #     try:
-    #         patient = PatientProfile.objects.get(id=patient_id)
-    #         return Response({
-    #             'status': 'success',
-    #             'message': result['message'],
-    #             'patient': {
-    #                 'id': patient.id,
-    #                 'name': patient.profile.user.get_full_name(),
-    #                 'email': patient.profile.user.email,
-    #                 'idNumber': patient.profile.mh_user_id,
-    #             },
-    #             'remaining': result['remaining']
-    #         })
-    #     except PatientProfile.DoesNotExist:
-    #         return Response({
-    #             'status': 'success',
-    #             'message': result['message'],
-    #             'patient_id': patient_id,
-    #             'remaining': result['remaining']
-    #         })
     @action(detail=False, methods=['post'], url_path='admit')
     def admit_patient(self, request):
         from django.utils import timezone
@@ -1245,6 +1209,10 @@ class QueueViewSet(viewsets.GenericViewSet):
                 {'status': 'error', 'message': 'Doctor profile missing'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # ✅ Doctor contact info used on admit emails
+        admitting_doctor_email = request.user.email or None
+        admitting_doctor_name  = request.user.get_full_name() or request.user.username
 
         patient_id = request.data.get('patient_id')
         if not patient_id:
@@ -1301,8 +1269,13 @@ class QueueViewSet(viewsets.GenericViewSet):
                     status='ongoing',
                 )
                 consultation_created = True
-                print('forced', consultation) 
-                queue.admit(patient_id)           
+                print('forced', consultation)
+                # ✅ Real admit — pass doctor info so the admit email fires
+                queue.admit(
+                    patient_id,
+                    doctor_email=admitting_doctor_email,
+                    doctor_name=admitting_doctor_name,
+                )
             return Response({
                 'status': 'success',
                 'message': 'Patient already admitted',
@@ -1317,7 +1290,8 @@ class QueueViewSet(viewsets.GenericViewSet):
         # ── 2b. Conflict: another doctor actively in progress ──
         if other_doctor and already_started and not force:
             other = appt.doctor_profile.profile.user.get_full_name()
-            queue.admit(patient_id)
+            # ✅ Bookkeeping removal only — no "admitted" email on a 409
+            queue.admit(patient_id, send_email=False)
             return Response({
                 'status': 'conflict',
                 'message': f'Appointment already in progress with Dr. {other}. '
@@ -1335,7 +1309,12 @@ class QueueViewSet(viewsets.GenericViewSet):
                 f"status={appt.status} → caller={doctor.id} force={force}")
 
         # ── 3. Admit to queue ───────────────────────────────
-        result = queue.admit(patient_id)
+        # ✅ Real admit — pass doctor info so the admit email fires
+        result = queue.admit(
+            patient_id,
+            doctor_email=admitting_doctor_email,
+            doctor_name=admitting_doctor_name,
+        )
         if 'error' in result:
             # Same doctor retrying after a queue-side hiccup isn't fatal;
             # treat "already in queue" as success.
@@ -1405,83 +1384,7 @@ class QueueViewSet(viewsets.GenericViewSet):
             ),
             'took_over': other_doctor,
         })
-    # @action(detail=False, methods=['post'], url_path='admit')
-    # def admit_patient(self, request):
-    #     from consultations.models import Consultation
 
-    #     profile = getattr(request.user, 'profile', None)
-    #     if profile is None or profile.role != 'doctor':
-    #         return Response(
-    #             {'status': 'error', 'message': 'Only doctors can admit patients'},
-    #             status=status.HTTP_403_FORBIDDEN,
-    #         )
-
-    #     doctor = getattr(profile, 'doctor_profile', None)
-    #     if not doctor:
-    #         return Response(
-    #             {'status': 'error', 'message': 'Doctor profile missing'},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     patient_id = request.data.get('patient_id')
-    #     if not patient_id:
-    #         return Response(
-    #             {'status': 'error', 'message': 'patient_id is required'},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     result = queue.admit(patient_id)#, doctor_id=doctor.id)
-    #     if 'error' in result:
-    #         return Response(
-    #             {'status': 'error', 'message': result['error']},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     # ── Assign the doctor to the patient's open appointment + consultation ──
-    #     from accounts.models import PatientProfile
-    #     from appointments.models import Appointment
-
-    #     patient_profile = PatientProfile.objects.filter(id=patient_id).first()
-    #     if patient_profile:
-    #         # Find the open appointment for this patient that has no doctor
-    #         appt = (
-    #             Appointment.objects
-    #             .filter(
-    #                 patient_profile=patient_profile,
-    #                 doctor_profile__isnull=True,
-    #                 status__in=['scheduled', 'confirmed'],
-    #             )
-    #             .order_by('-created_at')
-    #             .first()
-    #         )
-
-    #         if appt:
-    #             appt.doctor_profile = doctor
-    #             appt.doctor_assigned_at = timezone.now()
-    #             appt.status = 'in_progress'
-    #             appt.save(update_fields=[
-    #                 'doctor_profile', 'doctor_assigned_at', 'status', 'updated_at',
-    #             ])
-
-    #             # Assign the doctor to the consultation too
-    #             consultation = getattr(appt, 'consultation', None)
-    #             if consultation and consultation.doctor_profile_id is None:
-    #                 consultation.doctor_profile = doctor
-    #                 consultation.status = 'ongoing'
-    #                 consultation.save(update_fields=[
-    #                     'doctor_profile', 'status', 'updated_at',
-    #                 ])
-
-    #     return Response({
-    #         'status': 'success',
-    #         'message': result['message'],
-    #         'patient_id': patient_id,
-    #         'remaining': result['remaining'],
-    #     })   
-        
-        
-        
-             
     @swagger_auto_schema(
         operation_description="✅ Complete a consultation (doctor only)",
         request_body=openapi.Schema(
@@ -1506,28 +1409,28 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can complete consultations'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         patient_id = request.data.get('patient_id')
         if not patient_id:
             return Response({
                 'status': 'error',
                 'message': 'patient_id is required'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         result = queue.complete(patient_id)
-        
+
         if 'error' in result:
             return Response({
                 'status': 'error',
                 'message': result['error']
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         return Response({
             'status': 'success',
             'message': result['message'],
             'patient_id': patient_id
         })
-    
+
     @swagger_auto_schema(
         operation_description="✅ Admit and complete in one go (doctor only)",
         request_body=openapi.Schema(
@@ -1552,22 +1455,22 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can perform this action'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         patient_id = request.data.get('patient_id')
         if not patient_id:
             return Response({
                 'status': 'error',
                 'message': 'patient_id is required'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         result = queue.admit(patient_id)
-        
+
         if 'error' in result:
             return Response({
                 'status': 'error',
                 'message': result['error']
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         from accounts.models import PatientProfile
         try:
             patient = PatientProfile.objects.get(id=patient_id)
@@ -1585,7 +1488,7 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'message': 'Patient admitted and completed',
                 'patient_id': patient_id
             })
-    
+
     @swagger_auto_schema(
         operation_description="Get admitted patients history (doctor only)",
         responses={200: openapi.Response('Admitted patients')}
@@ -1598,14 +1501,14 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can view admitted patients'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         admitted = queue.get_admitted()
         return Response({
             'status': 'success',
             'count': len(admitted),
             'data': admitted
         })
-    
+
     @swagger_auto_schema(
         operation_description="Get completed patients history (doctor only)",
         responses={200: openapi.Response('Completed patients')}
@@ -1618,14 +1521,14 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can view completed patients'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         completed = queue.get_completed()
         return Response({
             'status': 'success',
             'count': len(completed),
             'data': completed
         })
-    
+
     @swagger_auto_schema(
         operation_description="Get queue length",
         responses={200: openapi.Response('Queue length')}
@@ -1637,7 +1540,7 @@ class QueueViewSet(viewsets.GenericViewSet):
             'status': 'success',
             'length': len(queue)
         })
-    
+
     @swagger_auto_schema(
         operation_description="Get online status of queue (doctor only)",
         responses={200: openapi.Response('Online status')}
@@ -1650,11 +1553,11 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only doctors can view online status'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         queue_data = queue.get_queue()
         online = [p for p in queue_data if p['is_online']]
         offline = [p for p in queue_data if not p['is_online']]
-        
+
         return Response({
             'status': 'success',
             'total': len(queue_data),
@@ -1663,7 +1566,7 @@ class QueueViewSet(viewsets.GenericViewSet):
             'online_patients': online,
             'offline_patients': offline
         })
-    
+
     @swagger_auto_schema(
         operation_description="Cleanup inactive patients (admin only)",
         request_body=openapi.Schema(
@@ -1686,15 +1589,715 @@ class QueueViewSet(viewsets.GenericViewSet):
                 'status': 'error',
                 'message': 'Only admins can clean up the queue'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         timeout = request.data.get('timeout', 120)
         result = queue.cleanup_inactive(timeout)
-        
+
         return Response({
             'status': 'success',
             'message': f'Removed {result["removed"]} inactive patients',
             'remaining': result['remaining']
         })
+
+# class QueueViewSet(viewsets.GenericViewSet):
+#     from consultations.models import Consultation
+#     """
+#     Simple queue management using a list/array
+#     """
+#     permission_classes = [permissions.IsAuthenticated]
+    
+#     @swagger_auto_schema(
+#         operation_description="Get current queue",
+#         responses={200: openapi.Response('Queue list')}
+#     )
+#     # @action(detail=False, methods=['get'], url_path='list')
+#     # def get_queue(self, request):
+#     #     """Get all patients in queue"""
+#     #     queue_data = queue.get_queue()
+#     #     return Response({
+#     #         'status': 'success',
+#     #         'count': len(queue_data),
+#     #         'online_count': sum(1 for p in queue_data if p['is_online']),
+#     #         'data': queue_data
+#     #     })
+
+#     def _purge_junk_ongoing(self, patient_profile, keep_id=None):
+#         from consultations.models import Consultation
+#         """
+#         Ensure at most ONE 'ongoing' consultation remains for the patient.
+
+#         Rules:
+#         • Junk rows (hpc < 10 chars) are always deleted.
+#         • Of the remaining *valid* rows, only the most recent survives.
+#         • If `keep_id` is provided, that row is the sole survivor;
+#             every other 'ongoing' row (junk OR stale valid) is deleted.
+#         """
+#         ongoing = list(
+#             patient_profile.consultations
+#             .filter(status='ongoing')
+#             .annotate(hpc_len=Length(Coalesce('hpc', Value(''))))
+#             .order_by('-created_at')
+#         )
+
+#         if not ongoing:
+#             print(f"[purge] no ongoing for patient_profile={patient_profile.id}")
+#             return []
+
+#         if keep_id:
+#             # caller explicitly chose which one survives
+#             to_delete = [c.id for c in ongoing if c.id != keep_id]
+#         else:
+#             junk  = [c for c in ongoing if c.hpc_len < 10]
+#             valid = [c for c in ongoing if c.hpc_len >= 10]   # already sorted desc
+#             keeper = valid[0] if valid else None              # latest valid
+
+#             to_delete = [c.id for c in junk]
+#             if keeper:
+#                 to_delete += [c.id for c in valid if c.id != keeper.id]
+
+#         if to_delete:
+#             Consultation.objects.filter(id__in=to_delete).delete()
+
+#         print(
+#             f"[purge] patient_profile={patient_profile.id} "
+#             f"found={len(ongoing)} kept={[c.id for c in ongoing if c.id not in to_delete]} "
+#             f"deleted={to_delete}"
+#         )
+#         return to_delete    
+    
+#     @action(detail=False, methods=['get'], url_path='list')
+#     def get_queue(self, request):
+#         """
+#         Queue scoped by the caller's doctor profile.
+#         """
+#         from appointments.models import Appointment
+
+
+#         user = request.user
+#         profile = getattr(user, 'profile', None)
+
+#         # ── 1. Base queue ──────────────────────────────────────────
+#         queue_data = queue.get_queue()
+#         all_patient_ids = [row['patient_id'] for row in queue_data]
+
+#         # ── 2. Active appointments ─────────────────────────────────
+#         active_appointments = (
+#             Appointment.objects.all().values_list('patient_profile_id', 'doctor_profile_id')            
+#         )
+#         # print('active appointment here')
+#         patient_to_doctor = dict(active_appointments)
+
+#         # ── 3. Caller's doctor_profile ─────────────────────────────
+#         doctor_profile = None
+#         if profile and profile.role == 'doctor' and not user.is_staff:
+#             doctor_profile = getattr(profile, 'doctor_profile', None)
+
+#         my_doctor_id = doctor_profile.id if doctor_profile else None
+
+#         # ── 4. Visibility rules ────────────────────────────────────
+#         visible = []
+
+#         if user.is_staff:
+#             visible = list(queue_data)
+
+#         elif my_doctor_id is not None:
+#             for row in queue_data:
+#                 pid = row['patient_id']
+#                 assigned_doctor = patient_to_doctor.get(pid)
+
+#                 if assigned_doctor is None:
+#                     row = {**row, 'assigned_to_me': False, 'unassigned': True}
+#                     visible.append(row)
+#                     # print("INCLUDE (unassigned)")
+#                 elif assigned_doctor == my_doctor_id:
+#                     row = {**row, 'assigned_to_me': True, 'unassigned': False}
+#                     visible.append(row)
+#                     # print("INCLUDE (mine)")
+#                 else:
+#                     print("SKIP (another doctor)")
+
+#         else:
+#             # print("\n🟢 branch: NON-DOCTOR → only unassigned")
+#             for row in queue_data:
+#                 pid = row['patient_id']
+#                 assigned_doctor = patient_to_doctor.get(pid)
+#                 # print(f"   patient {pid}: assigned_doctor={assigned_doctor}", end=" → ")
+#                 if assigned_doctor is None:
+#                     visible.append({**row, 'unassigned': True, 'assigned_to_me': False})
+#                     # print("INCLUDE")
+#                 else:
+#                     pass
+#                     # print("SKIP")
+
+
+#         return Response({
+#             'status': 'success',
+#             'count': len(visible),
+#             'online_count': sum(1 for p in visible if p.get('is_online')),
+#             'doctor_scope': (
+#                 'all' if user.is_staff
+#                 else my_doctor_id if my_doctor_id is not None
+#                 else 'unassigned_only'
+#             ),
+#             'data': visible,
+#         })        
+#     @swagger_auto_schema(
+#         operation_description="Get my queue position - also acts as heartbeat",
+#         responses={200: openapi.Response('Queue position')}
+#     )
+#     @action(detail=False, methods=['get'], url_path='my-position')
+#     def my_position(self, request):
+#         """Get current patient's queue position. Every call also acts as heartbeat!"""
+#         if not hasattr(request.user.profile, 'patient_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only patients can check their position'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         patient = request.user.profile
+#         print(queue.get_queue())
+#         result = queue.get_position(patient.id)
+        
+#         if result:
+#             return Response({
+#                 'status': 'success',
+#                 'in_queue': True,
+#                 'position': result['position'],
+#                 'patients_ahead': result['patients_ahead'],
+#                 'queue_length': result['queue_length'],
+#                 'is_online': True
+#             })
+        
+#         return Response({
+#             'status': 'success',
+#             'in_queue': False,
+#             'message': 'You are not in the queue'
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Join the queue as current user",
+#         responses={200: openapi.Response('Queue position')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='join-me')
+#     def join_me(self, request):
+#         """Current patient joins the queue"""
+#         if not hasattr(request.user.profile, 'patient_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only patients can join the queue'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         patient = request.user.profile
+#         patient_id = patient.id
+#         mh_user_id = patient.mh_user_id
+#         name = request.user.get_full_name()
+        
+#         if queue.is_in_queue(patient_id):
+#             position = queue.get_position(patient_id)
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'You are already in the queue',
+#                 'position': position['position'] if position else None
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         result = queue.join(patient_id, mh_user_id, name)
+        
+#         if 'error' in result:
+#             return Response({
+#                 'status': 'error',
+#                 'message': result['error']
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         return Response({
+#             'status': 'success',
+#             'message': f'You joined the queue',
+#             'position': result['position'],
+#             'patients_ahead': result['patients_ahead'],
+#             'queue_length': result['queue_length']
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Leave the queue as current user",
+#         responses={200: openapi.Response('Left queue')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='leave-me')
+#     def leave_me(self, request):
+#         """Current patient leaves the queue"""
+#         if not hasattr(request.user.profile, 'patient_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only patients can leave the queue'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         patient = request.user.profile.patient_profile
+#         result = queue.leave(patient.id)
+        
+#         if 'error' in result:
+#             return Response({
+#                 'status': 'error',
+#                 'message': result['error']
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         return Response({
+#             'status': 'success',
+#             'message': 'You left the queue'
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Get next patient (doctor only)",
+#         responses={200: openapi.Response('Next patient')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='next')
+#     def next_patient(self, request):
+#         """Doctor gets the next patient (pop from front)"""
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can get the next patient'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         result = queue.next()
+        
+#         if 'error' in result:
+#             return Response({
+#                 'status': 'error',
+#                 'message': result['error']
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         # Get patient details
+#         from accounts.models import PatientProfile
+#         try:
+#             patient = PatientProfile.objects.get(id=result['patient_id'])
+#             return Response({
+#                 'status': 'success',
+#                 'message': f'Patient {patient.profile.user.get_full_name()} admitted',
+#                 'patient': {
+#                     'id': patient.id,
+#                     'name': patient.profile.user.get_full_name(),
+#                     'email': patient.profile.user.email,
+#                     'idNumber': patient.profile.mh_user_id,
+#                 },
+#                 'remaining': result['remaining']
+#             })
+#         except PatientProfile.DoesNotExist:
+#             return Response({
+#                 'status': 'success',
+#                 'patient_id': result['patient_id'],
+#                 'remaining': result['remaining']
+#             })
+    
+#     @swagger_auto_schema(
+#         operation_description="✅ Admit a specific patient (doctor only)",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'patient_id': openapi.Schema(
+#                     type=openapi.TYPE_INTEGER,
+#                     description='Patient profile ID to admit'
+#                 ),
+#             },
+#             required=['patient_id']
+#         ),
+#         responses={200: openapi.Response('Patient admitted')}
+#     )
+
+#     @action(detail=False, methods=['post'], url_path='admit')
+#     def admit_patient(self, request):
+#         from django.utils import timezone
+#         from django.db import transaction
+#         from accounts.models import PatientProfile
+#         from appointments.models import Appointment
+#         from consultations.models import Consultation
+
+#         # ── 1. Auth ─────────────────────────────────────────
+#         profile = getattr(request.user, 'profile', None)
+#         if profile is None or profile.role != 'doctor':
+#             return Response(
+#                 {'status': 'error', 'message': 'Only doctors can admit patients'},
+#                 status=status.HTTP_403_FORBIDDEN,
+#             )
+
+#         doctor = getattr(profile, 'doctor_profile', None)
+#         if not doctor:
+#             return Response(
+#                 {'status': 'error', 'message': 'Doctor profile missing'},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         patient_id = request.data.get('patient_id')
+#         if not patient_id:
+#             return Response(
+#                 {'status': 'error', 'message': 'patient_id is required'},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         force = bool(request.data.get('force'))
+
+#         patient_profile = PatientProfile.objects.filter(id=patient_id).first()
+#         if not patient_profile:
+#             return Response(
+#                 {'status': 'error', 'message': 'Patient not found'},
+#                 status=status.HTTP_404_NOT_FOUND,
+#             )
+
+#         # ── 2. Find the open appointment ────────────────────
+#         # include in_progress so a re-admit / double-click can find it
+#         appt = (
+#             Appointment.objects
+#             .filter(
+#                 patient_profile=patient_profile,
+#                 status__in=['scheduled', 'confirmed', 'in_progress'],
+#             )
+#             .order_by('-created_at')
+#             .first()
+#         )
+#         if not appt:
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'No open appointment found for this patient. '
+#                         'Create an appointment before admitting.',
+#             }, status=status.HTTP_400_BAD_REQUEST)
+
+#         same_doctor     = appt.doctor_profile_id == doctor.id
+#         other_doctor    = (appt.doctor_profile_id is not None) and not same_doctor
+#         already_started = appt.status == 'in_progress'
+
+#         # ── 2a. Idempotent path: same doctor, already admitted ──
+#         consultation_created = False
+#         if same_doctor and already_started:
+#             consultation = Consultation.objects.filter(appointment=appt).first()
+#             print('same doctor, already started', consultation)
+#             if not consultation:
+#                 consultation = Consultation.objects.create(
+#                     appointment=appt,
+#                     patient_profile=patient_profile,
+#                     doctor_profile=doctor,
+#                     type=appt.type,
+#                     clinic_location=(
+#                         appt.clinic.name if getattr(appt, 'clinic', None) else ''
+#                     ),
+#                     status='ongoing',
+#                 )
+#                 consultation_created = True
+#                 print('forced', consultation) 
+#                 queue.admit(patient_id)           
+#             return Response({
+#                 'status': 'success',
+#                 'message': 'Patient already admitted',
+#                 'idempotent': True,
+#                 'patient_id': patient_id,
+#                 'appointment_id': appt.id,
+#                 'consultation_id': consultation.id if consultation else None,
+#                 'consultation_created': consultation_created,
+#                 'remaining': None,
+#             }, status=status.HTTP_200_OK)
+
+#         # ── 2b. Conflict: another doctor actively in progress ──
+#         if other_doctor and already_started and not force:
+#             other = appt.doctor_profile.profile.user.get_full_name()
+#             queue.admit(patient_id)
+#             return Response({
+#                 'status': 'conflict',
+#                 'message': f'Appointment already in progress with Dr. {other}. '
+#                         f'Pass force=true to take over.',
+#                 'appointment_id': appt.id,
+#                 'current_doctor_id': appt.doctor_profile_id,
+#                 'current_doctor_name': other,
+#             }, status=status.HTTP_409_CONFLICT)
+
+#         # ── 2c. Takeover allowed: other doctor, but only scheduled/confirmed ──
+#         # (also covers force=true on in_progress)
+#         previous_doctor_id = appt.doctor_profile_id
+#         if other_doctor:
+#             print(f"[admit] takeover: appt={appt.id} was doctor={previous_doctor_id} "
+#                 f"status={appt.status} → caller={doctor.id} force={force}")
+
+#         # ── 3. Admit to queue ───────────────────────────────
+#         result = queue.admit(patient_id)
+#         if 'error' in result:
+#             # Same doctor retrying after a queue-side hiccup isn't fatal;
+#             # treat "already in queue" as success.
+#             msg = (result.get('error') or '').lower()
+#             if 'already' in msg and 'queue' in msg:
+#                 result = {
+#                     'message': 'Patient was already in queue',
+#                     'remaining': None,
+#                 }
+#             else:
+#                 return Response(
+#                     {'status': 'error', 'message': result['error']},
+#                     status=status.HTTP_400_BAD_REQUEST,
+#                 )
+
+#         # ── 4. Assign doctor + get-or-create the consultation ──
+#         with transaction.atomic():
+#             appt.doctor_profile = doctor
+#             appt.doctor_assigned_at = timezone.now()
+#             appt.status = 'in_progress'
+#             appt.save(update_fields=[
+#                 'doctor_profile', 'doctor_assigned_at', 'status', 'updated_at',
+#             ])
+
+#             consultation = Consultation.objects.filter(appointment=appt).first()
+
+#             if consultation is None:
+#                 print('consultation not ofund')
+#                 consultation = Consultation.objects.create(
+#                     appointment=appt,
+#                     patient_profile=patient_profile,
+#                     doctor_profile=doctor,
+#                     type=appt.type,
+#                     clinic_location=(
+#                         appt.clinic.name if getattr(appt, 'clinic', None) else ''
+#                     ),
+#                     status='ongoing',
+#                 )
+#                 consultation_created = True
+#             else:
+#                 print('consultation here')
+#                 update_fields = []
+#                 if consultation.doctor_profile_id != doctor.id:
+#                     consultation.doctor_profile = doctor
+#                     update_fields.append('doctor_profile')
+#                 if consultation.status != 'ongoing':
+#                     consultation.status = 'ongoing'
+#                     update_fields.append('status')
+#                 if update_fields:
+#                     consultation.save(update_fields=update_fields + ['updated_at'])
+#                 consultation_created = True
+
+#             # ── clean up any junk / duplicate ongoing rows ──
+#             # self._purge_junk_ongoing(patient_profile, keep_id=consultation.id)
+#         queue.admit(patient_id)
+#         return Response({
+#             'status': 'success',
+#             'message': result.get('message', 'Admitted'),
+#             'idempotent': False,
+#             'patient_id': patient_id,
+#             'remaining': result.get('remaining'),
+#             'appointment_id': appt.id,
+#             'consultation_id': consultation.id,
+#             'consultation_created': consultation_created,
+#             'previous_doctor_id': (
+#                 previous_doctor_id if other_doctor else None
+#             ),
+#             'took_over': other_doctor,
+#         })
+             
+#     @swagger_auto_schema(
+#         operation_description="✅ Complete a consultation (doctor only)",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'patient_id': openapi.Schema(
+#                     type=openapi.TYPE_INTEGER,
+#                     description='Patient profile ID to complete'
+#                 ),
+#             },
+#             required=['patient_id']
+#         ),
+#         responses={200: openapi.Response('Patient completed')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='complete')
+#     def complete_patient(self, request):
+#         """
+#         ✅ Mark a patient's consultation as complete
+#         """
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can complete consultations'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         patient_id = request.data.get('patient_id')
+#         if not patient_id:
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'patient_id is required'
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         result = queue.complete(patient_id)
+        
+#         if 'error' in result:
+#             return Response({
+#                 'status': 'error',
+#                 'message': result['error']
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         return Response({
+#             'status': 'success',
+#             'message': result['message'],
+#             'patient_id': patient_id
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="✅ Admit and complete in one go (doctor only)",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'patient_id': openapi.Schema(
+#                     type=openapi.TYPE_INTEGER,
+#                     description='Patient profile ID'
+#                 ),
+#             },
+#             required=['patient_id']
+#         ),
+#         responses={200: openapi.Response('Patient admitted and completed')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='admit-and-complete')
+#     def admit_and_complete(self, request):
+#         """
+#         ✅ Admit and immediately complete a patient (for quick consultations)
+#         """
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can perform this action'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         patient_id = request.data.get('patient_id')
+#         if not patient_id:
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'patient_id is required'
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         result = queue.admit(patient_id)
+        
+#         if 'error' in result:
+#             return Response({
+#                 'status': 'error',
+#                 'message': result['error']
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         from accounts.models import PatientProfile
+#         try:
+#             patient = PatientProfile.objects.get(id=patient_id)
+#             return Response({
+#                 'status': 'success',
+#                 'message': f'Patient {patient.profile.user.get_full_name()} admitted and completed',
+#                 'patient': {
+#                     'id': patient.id,
+#                     'name': patient.profile.user.get_full_name()
+#                 }
+#             })
+#         except PatientProfile.DoesNotExist:
+#             return Response({
+#                 'status': 'success',
+#                 'message': 'Patient admitted and completed',
+#                 'patient_id': patient_id
+#             })
+    
+#     @swagger_auto_schema(
+#         operation_description="Get admitted patients history (doctor only)",
+#         responses={200: openapi.Response('Admitted patients')}
+#     )
+#     @action(detail=False, methods=['get'], url_path='admitted')
+#     def get_admitted(self, request):
+#         """Get list of admitted patients (doctor only)"""
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can view admitted patients'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         admitted = queue.get_admitted()
+#         return Response({
+#             'status': 'success',
+#             'count': len(admitted),
+#             'data': admitted
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Get completed patients history (doctor only)",
+#         responses={200: openapi.Response('Completed patients')}
+#     )
+#     @action(detail=False, methods=['get'], url_path='completed')
+#     def get_completed(self, request):
+#         """Get list of completed patients (doctor only)"""
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can view completed patients'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         completed = queue.get_completed()
+#         return Response({
+#             'status': 'success',
+#             'count': len(completed),
+#             'data': completed
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Get queue length",
+#         responses={200: openapi.Response('Queue length')}
+#     )
+#     @action(detail=False, methods=['get'], url_path='length')
+#     def queue_length(self, request):
+#         """Get number of patients in queue"""
+#         return Response({
+#             'status': 'success',
+#             'length': len(queue)
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Get online status of queue (doctor only)",
+#         responses={200: openapi.Response('Online status')}
+#     )
+#     @action(detail=False, methods=['get'], url_path='online-status')
+#     def online_status(self, request):
+#         """Get online/offline status of all queue patients (doctor only)"""
+#         if not hasattr(request.user.profile, 'doctor_profile'):
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only doctors can view online status'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         queue_data = queue.get_queue()
+#         online = [p for p in queue_data if p['is_online']]
+#         offline = [p for p in queue_data if not p['is_online']]
+        
+#         return Response({
+#             'status': 'success',
+#             'total': len(queue_data),
+#             'online_count': len(online),
+#             'offline_count': len(offline),
+#             'online_patients': online,
+#             'offline_patients': offline
+#         })
+    
+#     @swagger_auto_schema(
+#         operation_description="Cleanup inactive patients (admin only)",
+#         request_body=openapi.Schema(
+#             type=openapi.TYPE_OBJECT,
+#             properties={
+#                 'timeout': openapi.Schema(
+#                     type=openapi.TYPE_INTEGER,
+#                     description='Timeout in seconds (default: 120)',
+#                     default=120
+#                 )
+#             }
+#         ),
+#         responses={200: openapi.Response('Cleanup result')}
+#     )
+#     @action(detail=False, methods=['post'], url_path='cleanup')
+#     def cleanup_queue(self, request):
+#         """Remove inactive patients from queue (admin only)"""
+#         if not request.user.is_staff:
+#             return Response({
+#                 'status': 'error',
+#                 'message': 'Only admins can clean up the queue'
+#             }, status=status.HTTP_403_FORBIDDEN)
+        
+#         timeout = request.data.get('timeout', 120)
+#         result = queue.cleanup_inactive(timeout)
+        
+#         return Response({
+#             'status': 'success',
+#             'message': f'Removed {result["removed"]} inactive patients',
+#             'remaining': result['remaining']
+#         })
+
 # DoctorAvailability ViewSet
 # ============================================
 class DoctorAvailabilityViewSet(viewsets.ModelViewSet):

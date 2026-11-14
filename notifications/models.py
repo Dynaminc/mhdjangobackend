@@ -93,6 +93,14 @@ class Notification(BaseModel):
         ('account_updated', 'Account Updated'),
         ('profile_updated', 'Profile Updated'),
         
+        ('referral_created',     'Referral Submitted'),
+        ('referral_under_review','Referral Under Review'),
+        ('referral_approved',    'Referral Approved'),
+        ('referral_scheduled',   'Referral Scheduled'),
+        ('referral_completed',   'Referral Completed'),
+        ('referral_rejected',    'Referral Rejected'),
+        ('referral_cancelled',   'Referral Cancelled'),
+
         # General
         ('info', 'Information'),
         ('reminder', 'Reminder'),
@@ -404,7 +412,7 @@ class NotificationPreference(BaseModel):
     payment_notifications = models.BooleanField(default=True)
     queue_notifications = models.BooleanField(default=True)
     system_notifications = models.BooleanField(default=True)
-    
+    referral_notifications = models.BooleanField(default=True)
     # Channel preferences
     email_enabled = models.BooleanField(default=True)
     sms_enabled = models.BooleanField(default=False)
@@ -471,6 +479,7 @@ class NotificationSignalHandler:
             'lab': prefs.lab_notifications,
             'payment': prefs.payment_notifications,
             'queue': prefs.queue_notifications,
+            'referral':     prefs.referral_notifications,   # ← new
             'system': prefs.system_notifications,
         }
         
